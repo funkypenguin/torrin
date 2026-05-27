@@ -1,0 +1,62 @@
+# Torrin
+
+Open-source debrid service. Add a magnet link, get a stream.
+
+## What it does
+
+Torrin downloads torrents on remote servers through a VPN and gives you direct HTTPS streaming URLs. No torrent client needed, no IP exposure, no seeding. Content is cached so repeat requests are instant.
+
+## How it works
+
+1. User submits a magnet link
+2. API checks cache. If cached, returns signed stream URLs instantly
+3. If not cached, downloads the torrent behind a VPN
+4. On completion, uploads to object storage
+5. User streams via signed HTTPS URL
+
+## Features
+
+- Shared cache across all users
+- Stremio integration
+- Plan-based limits (concurrent slots, max torrent size, priority queue)
+- Tiered content retention based on popularity
+- Subscription management with pause/resume
+- Stall detection with progressive recovery
+- Built-in player that handles all formats (MKV, HEVC, AV1, 4K HDR)
+
+## Project structure
+
+```
+internal/           # Open-source core (MIT)
+  availability/     # Cache checking
+  eviction/         # Retention engine
+  jobs/             # Job model + store
+  poller/           # Download > upload > cleanup pipeline
+  qbit/             # Torrent engine client
+  r2/               # Object storage client + URL signing
+
+private/            # Proprietary (not included)
+  cmd/api/          # HTTP API server
+  cmd/stremio/      # Stremio addon server
+  internal/         # Auth, billing, plans, middleware
+
+web/                # Frontend
+worker/             # Streaming CDN worker
+```
+
+## Self-hosting
+
+Requirements:
+- Linux server with Docker
+- Object storage with CDN
+- VPN provider
+
+```bash
+cp .env.example .env
+# Fill in your credentials
+docker compose up -d
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -1,0 +1,26 @@
+# Env
+.env
+.env.local
+
+# Data
+downloads/
+*.db
+*.log
+
+# Build
+torrin
+web/dist/
+node_modules/
+
+# Private (not open-sourced)
+private/
+comet/
+web/
+worker/
+docker-compose.yml
+Dockerfile.*
+.env.example
+
+# Tools
+.DS_Store
+.wrangler/

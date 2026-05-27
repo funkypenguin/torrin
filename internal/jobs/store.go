@@ -1,0 +1,317 @@
+package jobs
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+type Store struct {
+	db *sql.DB
+}
+
+func NewStore(dbPath string) (*Store, error) {
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+
+	if err := migrate(db); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+
+	return &Store{db: db}, nil
+}
+
+func migrate(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS jobs (
+			id          TEXT PRIMARY KEY,
+			user_id     TEXT NOT NULL DEFAULT '',
+			info_hash   TEXT NOT NULL,
+			name        TEXT NOT NULL DEFAULT '',
+			magnet      TEXT NOT NULL DEFAULT '',
+			status      TEXT NOT NULL DEFAULT 'pending',
+			error       TEXT NOT NULL DEFAULT '',
+			files       TEXT NOT NULL DEFAULT '[]',
+			selected    TEXT NOT NULL DEFAULT '[]',
+			streams     TEXT NOT NULL DEFAULT '[]',
+			created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_jobs_infohash ON jobs(info_hash);
+		CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+		CREATE INDEX IF NOT EXISTS idx_jobs_userid ON jobs(user_id);
+	`)
+	if err != nil {
+		return err
+	}
+
+	db.Exec(`ALTER TABLE jobs ADD COLUMN last_accessed_at DATETIME`)
+	db.Exec(`ALTER TABLE jobs ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0`)
+	db.Exec(`ALTER TABLE jobs ADD COLUMN file_size INTEGER NOT NULL DEFAULT 0`)
+	db.Exec(`ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`)
+	db.Exec(`ALTER TABLE jobs ADD COLUMN max_bytes INTEGER NOT NULL DEFAULT 0`)
+
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs(status, priority DESC, created_at ASC)`)
+
+	return nil
+}
+
+func (s *Store) Create(job *Job) error {
+	files, _ := json.Marshal(job.Files)
+	selected, _ := json.Marshal(job.SelectedIdxs)
+	streams, _ := json.Marshal(job.StreamURLs)
+
+	_, err := s.db.Exec(`
+		INSERT INTO jobs (id, user_id, info_hash, name, magnet, status, error, files, selected, streams, max_bytes, priority, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		job.ID, job.UserID, job.InfoHash, job.Name, job.Magnet, job.Status, job.Error,
+		string(files), string(selected), string(streams),
+		job.MaxBytes, job.Priority, job.CreatedAt, job.UpdatedAt,
+	)
+	return err
+}
+
+func (s *Store) Update(job *Job) error {
+	files, _ := json.Marshal(job.Files)
+	selected, _ := json.Marshal(job.SelectedIdxs)
+	streams, _ := json.Marshal(job.StreamURLs)
+	job.UpdatedAt = time.Now()
+
+	_, err := s.db.Exec(`
+		UPDATE jobs SET name=?, status=?, error=?, files=?, selected=?, streams=?, updated_at=?
+		WHERE id=?`,
+		job.Name, job.Status, job.Error,
+		string(files), string(selected), string(streams),
+		job.UpdatedAt, job.ID,
+	)
+	return err
+}
+
+func (s *Store) GetByID(id string) (*Job, error) {
+	return s.scanOne(s.db.QueryRow(
+		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE id=?`, id))
+}
+
+func (s *Store) GetByInfoHash(hash string) (*Job, error) {
+	return s.scanOne(s.db.QueryRow(
+		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE info_hash=? ORDER BY created_at DESC LIMIT 1`, hash))
+}
+
+func (s *Store) ListByInfoHash(hash string) ([]*Job, error) {
+	return s.queryMany(
+		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE info_hash=?`, hash)
+}
+
+func (s *Store) List(limit int) ([]*Job, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.queryMany(
+		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs ORDER BY created_at DESC LIMIT ?`, limit)
+}
+
+func (s *Store) ListByUser(userID string, limit int) ([]*Job, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.queryMany(
+		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT ?`, userID, limit)
+}
+
+func (s *Store) ListByStatus(status Status) ([]*Job, error) {
+	return s.queryMany(
+		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE status=? ORDER BY priority DESC, created_at ASC`, string(status))
+}
+
+func (s *Store) queryMany(query string, args ...any) ([]*Job, error) {
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*Job
+	for rows.Next() {
+		j, err := s.scanRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) scanOne(row *sql.Row) (*Job, error) {
+	j := &Job{}
+	var filesJSON, selectedJSON, streamsJSON string
+	err := row.Scan(
+		&j.ID, &j.UserID, &j.InfoHash, &j.Name, &j.Magnet,
+		&j.Status, &j.Error,
+		&filesJSON, &selectedJSON, &streamsJSON,
+		&j.FileSize, &j.MaxBytes, &j.Priority, &j.CreatedAt, &j.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(filesJSON), &j.Files)
+	json.Unmarshal([]byte(selectedJSON), &j.SelectedIdxs)
+	json.Unmarshal([]byte(streamsJSON), &j.StreamURLs)
+	return j, nil
+}
+
+func (s *Store) scanRow(rows *sql.Rows) (*Job, error) {
+	j := &Job{}
+	var filesJSON, selectedJSON, streamsJSON string
+	err := rows.Scan(
+		&j.ID, &j.UserID, &j.InfoHash, &j.Name, &j.Magnet,
+		&j.Status, &j.Error,
+		&filesJSON, &selectedJSON, &streamsJSON,
+		&j.FileSize, &j.MaxBytes, &j.Priority, &j.CreatedAt, &j.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(filesJSON), &j.Files)
+	json.Unmarshal([]byte(selectedJSON), &j.SelectedIdxs)
+	json.Unmarshal([]byte(streamsJSON), &j.StreamURLs)
+	return j, nil
+}
+
+func (s *Store) RecordAccess(infoHash string) error {
+	_, err := s.db.Exec(`
+		UPDATE jobs SET last_accessed_at=CURRENT_TIMESTAMP, access_count=access_count+1, updated_at=CURRENT_TIMESTAMP
+		WHERE info_hash=? AND (status='complete' OR status='cached')`, infoHash)
+	return err
+}
+
+type EvictionCandidate struct {
+	ID              string
+	InfoHash        string
+	Name            string
+	FileSize        int64
+	AccessCount     int
+	DaysSinceAccess int
+}
+
+func (s *Store) GetEvictionCandidates() ([]EvictionCandidate, error) {
+	rows, err := s.db.Query(`
+		SELECT id, info_hash, name, file_size, access_count,
+			CAST(julianday('now') - julianday(COALESCE(last_accessed_at, created_at)) AS INTEGER) as days_inactive
+		FROM jobs
+		WHERE status IN ('complete', 'cached')
+		ORDER BY
+			CASE
+				WHEN access_count = 0 THEN 0
+				WHEN access_count < 10 THEN 1
+				ELSE 2
+			END ASC,
+			days_inactive DESC,
+			file_size DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []EvictionCandidate
+	for rows.Next() {
+		var c EvictionCandidate
+		if err := rows.Scan(&c.ID, &c.InfoHash, &c.Name, &c.FileSize, &c.AccessCount, &c.DaysSinceAccess); err != nil {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func (s *Store) GetTotalCachedSize() (int64, error) {
+	var total int64
+	err := s.db.QueryRow(`SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE status IN ('complete', 'cached')`).Scan(&total)
+	return total, err
+}
+
+func (s *Store) SetFileSize(id string, size int64) error {
+	_, err := s.db.Exec(`UPDATE jobs SET file_size=? WHERE id=?`, size, id)
+	return err
+}
+
+func (s *Store) Delete(id string) error {
+	_, err := s.db.Exec(`DELETE FROM jobs WHERE id=?`, id)
+	return err
+}
+
+type UserStats struct {
+	TotalDownloads int   `json:"total_downloads"`
+	ActiveJobs     int   `json:"active_jobs"`
+	CompletedJobs  int   `json:"completed_jobs"`
+	FailedJobs     int   `json:"failed_jobs"`
+	TotalBytes     int64 `json:"total_bytes"`
+	TotalAccesses  int64 `json:"total_accesses"`
+}
+
+func (s *Store) GetUserStats(userID string) (*UserStats, error) {
+	st := &UserStats{}
+	s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE user_id=?`, userID).Scan(&st.TotalDownloads)
+	s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE user_id=? AND status IN ('pending','queued','processing')`, userID).Scan(&st.ActiveJobs)
+	s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE user_id=? AND status IN ('complete','cached')`, userID).Scan(&st.CompletedJobs)
+	s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE user_id=? AND status='failed'`, userID).Scan(&st.FailedJobs)
+	s.db.QueryRow(`SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE user_id=? AND status IN ('complete','cached')`, userID).Scan(&st.TotalBytes)
+	s.db.QueryRow(`SELECT COALESCE(SUM(access_count), 0) FROM jobs WHERE user_id=?`, userID).Scan(&st.TotalAccesses)
+	return st, nil
+}
+
+type HistoryEntry struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	InfoHash     string `json:"info_hash"`
+	Status       Status `json:"status"`
+	FileSize     int64  `json:"file_size"`
+	AccessCount  int64  `json:"access_count"`
+	CreatedAt    string `json:"created_at"`
+	LastAccessed string `json:"last_accessed,omitempty"`
+}
+
+func (s *Store) GetUserHistory(userID string, limit int) ([]HistoryEntry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(`
+		SELECT id, name, info_hash, status, file_size, access_count, created_at,
+			COALESCE(last_accessed_at, '') as last_accessed
+		FROM jobs WHERE user_id=? AND status IN ('complete','cached')
+		ORDER BY created_at DESC LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []HistoryEntry
+	for rows.Next() {
+		var h HistoryEntry
+		if err := rows.Scan(&h.ID, &h.Name, &h.InfoHash, &h.Status, &h.FileSize, &h.AccessCount, &h.CreatedAt, &h.LastAccessed); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	if out == nil {
+		out = []HistoryEntry{}
+	}
+	return out, rows.Err()
+}
+
+type GlobalStats struct {
+	TotalUsers       int   `json:"total_users"`
+	TotalJobs        int   `json:"total_jobs"`
+	TotalCachedGB    int64 `json:"total_cached_gb"`
+	TotalAccessCount int64 `json:"total_access_count"`
+}
+
+func (s *Store) DB() *sql.DB { return s.db }
+
+func (s *Store) Close() error {
+	return s.db.Close()
+}
