@@ -58,6 +58,13 @@ func migrate(db *sql.DB) error {
 
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs(status, priority DESC, created_at ASC)`)
 
+	db.Exec(`CREATE TABLE IF NOT EXISTS views (
+		info_hash TEXT NOT NULL,
+		user_id   TEXT NOT NULL,
+		viewed_on DATE NOT NULL DEFAULT (DATE('now')),
+		PRIMARY KEY (info_hash, user_id, viewed_on)
+	)`)
+
 	return nil
 }
 
@@ -182,11 +189,18 @@ func (s *Store) scanRow(rows *sql.Rows) (*Job, error) {
 	return j, nil
 }
 
-func (s *Store) RecordAccess(infoHash string) error {
-	_, err := s.db.Exec(`
-		UPDATE jobs SET last_accessed_at=CURRENT_TIMESTAMP, access_count=access_count+1, updated_at=CURRENT_TIMESTAMP
+func (s *Store) RecordView(infoHash, userID string) (bool, error) {
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO views (info_hash, user_id) VALUES (?, ?)`, infoHash, userID)
+	if err != nil {
+		return false, err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return false, nil
+	}
+	s.db.Exec(`UPDATE jobs SET last_accessed_at=CURRENT_TIMESTAMP, access_count=access_count+1, updated_at=CURRENT_TIMESTAMP
 		WHERE info_hash=? AND (status='complete' OR status='cached')`, infoHash)
-	return err
+	return true, nil
 }
 
 type EvictionCandidate struct {
