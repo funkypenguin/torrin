@@ -164,6 +164,10 @@ func (p *Poller) poll(ctx context.Context) {
 			continue
 		}
 
+		if qbit.IsQueued(t) {
+			continue
+		}
+
 		stalledFor := time.Since(job.UpdatedAt)
 		if qbit.IsStalled(t) {
 			if stalledFor > 24*time.Hour {

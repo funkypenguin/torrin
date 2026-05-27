@@ -205,10 +205,14 @@ func IsComplete(t *Torrent) bool {
 
 func IsDownloading(t *Torrent) bool {
 	switch t.State {
-	case "downloading", "stalledDL", "forcedDL", "metaDL", "allocating":
+	case "downloading", "stalledDL", "forcedDL", "metaDL", "allocating", "queuedDL", "checkingDL":
 		return true
 	}
 	return false
+}
+
+func IsQueued(t *Torrent) bool {
+	return t.State == "queuedDL"
 }
 
 func IsError(t *Torrent) bool {
