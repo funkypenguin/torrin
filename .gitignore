@@ -25,3 +25,4 @@ Dockerfile.*
 .DS_Store
 .wrangler/
 torrent-name-parser/
+awesome-debrid/
