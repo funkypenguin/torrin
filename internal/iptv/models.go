@@ -8,10 +8,10 @@ type Stream struct {
 }
 
 type ServerInfo struct {
-	URL           string `json:"url"`
-	Port          string `json:"port"`
-	HTTPSPort     string `json:"https_port"`
-	Protocol      string `json:"server_protocol"`
+	URL       string `json:"url"`
+	Port      string `json:"port"`
+	HTTPSPort string `json:"https_port"`
+	Protocol  string `json:"server_protocol"`
 }
 
 type AuthResponse struct {
