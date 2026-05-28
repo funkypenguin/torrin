@@ -24,3 +24,4 @@ Dockerfile.*
 # Tools
 .DS_Store
 .wrangler/
+torrent-name-parser/

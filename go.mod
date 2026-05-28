@@ -1,12 +1,14 @@
 module github.com/torrin-app/torrin
 
-go 1.24
+go 1.25
 
 require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.17
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.19
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
+	github.com/lithammer/fuzzysearch v1.1.8
 	github.com/mattn/go-sqlite3 v1.14.24
+	github.com/torrin-app/torrent-name-parser v0.5.2
 )
 
 require (
@@ -20,4 +22,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.23 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.23 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
+	github.com/sahilm/fuzzy v0.1.2 // indirect
+	golang.org/x/text v0.9.0 // indirect
 )
