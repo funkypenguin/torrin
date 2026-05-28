@@ -8,15 +8,16 @@ Torrin downloads torrents on remote servers through a VPN and gives you direct H
 
 ## How it works
 
-1. User submits a magnet link
-2. API checks cache. If cached, returns signed stream URLs instantly
-3. If not cached, downloads the torrent behind a VPN
+1. User submits a magnet link or searches for content
+2. API checks cache and content providers. If available, returns stream URLs instantly
+3. If not available, downloads the torrent behind a VPN
 4. On completion, uploads to object storage
 5. User streams via signed HTTPS URL
 
 ## Features
 
 - Shared cache across all users
+- Instant streaming for popular content
 - Stremio integration
 - Plan-based limits (concurrent slots, max torrent size, priority queue)
 - Tiered content retention based on popularity
@@ -34,6 +35,7 @@ internal/           # Open-source core (MIT)
   poller/           # Download > upload > cleanup pipeline
   qbit/             # Torrent engine client
   r2/               # Object storage client + URL signing
+  iptv/             # Content provider client + proxy
 
 private/            # Proprietary (not included)
   cmd/api/          # HTTP API server
