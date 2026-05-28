@@ -168,30 +168,31 @@ func (p *Poller) poll(ctx context.Context) {
 			continue
 		}
 
+		// Stall handling — progressive recovery.
 		stalledFor := time.Since(job.UpdatedAt)
 		if qbit.IsStalled(t) {
-			if stalledFor > 24*time.Hour {
-				// 24h stalled → give up.
-				slog.Warn("torrent stalled for 24h, removing", "job", job.ID, "name", t.Name)
+			if stalledFor > 4*time.Hour {
+				// 4h stalled — give up.
+				slog.Warn("torrent stalled, removing", "job", job.ID, "name", t.Name, "stalled", stalledFor.Round(time.Minute))
 				job.Status = jobs.StatusFailed
-				job.Error = "torrent stalled — no peers available after 24 hours"
+				job.Error = "torrent stalled — no peers available"
 				p.store.Update(job)
 				p.deleteAndVerify(job.InfoHash, t)
 				p.Release(t.Size)
 				continue
-			} else if stalledFor > 2*time.Hour {
-				// 2h stalled → mark stalled status so it doesn't block slots.
+			} else if stalledFor > 1*time.Hour {
+				// 1h stalled — mark as stalled, keep reannouncing.
 				if job.Error != "stalled — waiting for peers" {
-					slog.Warn("torrent stalled for 2h", "job", job.ID, "name", t.Name)
+					slog.Warn("torrent stalled for 1h", "job", job.ID, "name", t.Name)
 					job.Error = "stalled — waiting for peers"
 					p.store.Update(job)
-					p.qb.Reannounce(job.InfoHash)
 				}
-			} else if stalledFor > 30*time.Minute {
-				// 30m → reannounce again.
 				p.qb.Reannounce(job.InfoHash)
-			} else if stalledFor > 10*time.Minute {
-				// 10m → first reannounce attempt.
+			} else if stalledFor > 15*time.Minute {
+				// 15m — second reannounce.
+				p.qb.Reannounce(job.InfoHash)
+			} else if stalledFor > 5*time.Minute {
+				// 5m — first reannounce attempt.
 				p.qb.Reannounce(job.InfoHash)
 			}
 		}
