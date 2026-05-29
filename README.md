@@ -24,6 +24,7 @@ Torrin downloads torrents on remote servers through a VPN and gives you direct H
 - Subscription management with pause/resume
 - Stall detection with progressive recovery
 - Built-in player that handles all formats (MKV, HEVC, AV1, 4K HDR)
+- WebDAV server for mounting content in VLC, Infuse, Kodi, or any file manager
 
 ## Project structure
 

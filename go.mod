@@ -1,6 +1,6 @@
 module github.com/torrin-app/torrin
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.17
@@ -23,5 +23,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.23 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/sahilm/fuzzy v0.1.2 // indirect
-	golang.org/x/text v0.9.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 )

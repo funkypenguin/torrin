@@ -346,6 +346,7 @@ func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.T
 		sib.StreamURLs = streamURLs
 		sib.Name = job.Name
 		sib.Status = jobs.StatusComplete
+		sib.Error = ""
 		p.store.Update(sib)
 		p.store.SetFileSize(sib.ID, uploadedSize)
 	}
