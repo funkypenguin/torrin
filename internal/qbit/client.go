@@ -124,6 +124,17 @@ func (c *Client) GetFiles(hash string) ([]TorrentFile, error) {
 	return files, nil
 }
 
+func (c *Client) ListTorrents() ([]Torrent, error) {
+	resp, err := c.http.Get(c.baseURL + "/api/v2/torrents/info?category=torrin")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var torrents []Torrent
+	return torrents, json.NewDecoder(resp.Body).Decode(&torrents)
+}
+
 func (c *Client) SetFilePriority(hash string, fileIndexes []int, priority int) error {
 	idxStrs := make([]string, len(fileIndexes))
 	for i, idx := range fileIndexes {
@@ -150,6 +161,23 @@ func (c *Client) Resume(hash string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 {
 		resp2, err := c.http.PostForm(c.baseURL+"/api/v2/torrents/resume", data)
+		if err != nil {
+			return err
+		}
+		defer resp2.Body.Close()
+	}
+	return nil
+}
+
+func (c *Client) Pause(hash string) error {
+	data := url.Values{"hashes": {strings.ToLower(hash)}}
+	resp, err := c.http.PostForm(c.baseURL+"/api/v2/torrents/stop", data)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		resp2, err := c.http.PostForm(c.baseURL+"/api/v2/torrents/pause", data)
 		if err != nil {
 			return err
 		}

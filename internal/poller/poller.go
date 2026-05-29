@@ -66,6 +66,8 @@ func (p *Poller) Release(bytes int64) {
 func (p *Poller) Run(ctx context.Context) {
 	slog.Info("poller started", "interval", p.interval, "budget_gb", p.budgetMax/(1024*1024*1024))
 
+	p.cleanupOrphans()
+
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 
@@ -77,6 +79,51 @@ func (p *Poller) Run(ctx context.Context) {
 		case <-ticker.C:
 			p.poll(ctx)
 		}
+	}
+}
+
+// cleanupOrphans removes stuck/orphaned torrents from qBit on startup.
+// Only removes torrents that are safe to delete:
+//   - no matching job in DB (true orphan)
+//   - job already failed
+//   - stuck on metadata with no progress
+func (p *Poller) cleanupOrphans() {
+	if err := p.qb.Login(); err != nil {
+		return
+	}
+
+	torrents, err := p.qb.ListTorrents()
+	if err != nil {
+		return
+	}
+
+	cleaned := 0
+	for _, t := range torrents {
+		job, err := p.store.GetByInfoHash(t.Hash)
+		if err != nil || job == nil {
+			slog.Info("cleanup orphan", "hash", t.Hash, "name", t.Name)
+			p.qb.Delete(t.Hash)
+			cleaned++
+			continue
+		}
+		if job.Status == jobs.StatusFailed {
+			slog.Info("cleanup failed job torrent", "hash", t.Hash, "name", t.Name)
+			p.qb.Delete(t.Hash)
+			cleaned++
+			continue
+		}
+		if qbit.IsFetchingMetadata(&t) && t.Size == 0 {
+			slog.Info("cleanup stuck metadata", "hash", t.Hash, "name", t.Name)
+			job.Status = jobs.StatusFailed
+			job.Error = "could not find torrent metadata"
+			p.store.Update(job)
+			p.qb.Delete(t.Hash)
+			cleaned++
+		}
+	}
+
+	if cleaned > 0 {
+		slog.Info("startup cleanup done", "removed", cleaned)
 	}
 }
 
@@ -152,6 +199,12 @@ func (p *Poller) poll(ctx context.Context) {
 
 		if qbit.IsDownloading(t) && job.Status != jobs.StatusProcessing {
 			job.Status = jobs.StatusProcessing
+			job.Error = ""
+			p.store.Update(job)
+		}
+
+		if t.DlSpeed > 0 && job.Error == "stalled — waiting for peers" {
+			job.Error = ""
 			p.store.Update(job)
 		}
 
@@ -170,7 +223,8 @@ func (p *Poller) poll(ctx context.Context) {
 
 		// Stall handling — progressive recovery.
 		stalledFor := time.Since(job.UpdatedAt)
-		if qbit.IsStalled(t) {
+		isStuck := qbit.IsStalled(t) || (t.DlSpeed == 0 && t.Progress > 0.95 && t.Progress < 1.0)
+		if isStuck {
 			if stalledFor > 4*time.Hour {
 				// 4h stalled — give up.
 				slog.Warn("torrent stalled, removing", "job", job.ID, "name", t.Name, "stalled", stalledFor.Round(time.Minute))
@@ -180,9 +234,17 @@ func (p *Poller) poll(ctx context.Context) {
 				p.deleteAndVerify(job.InfoHash, t)
 				p.Release(t.Size)
 				continue
+			} else if stalledFor > 2*time.Hour && job.Error != "restarting stalled torrent" {
+				// 2h stalled — force stop+start (once).
+				slog.Info("force restarting stalled torrent", "job", job.ID, "name", t.Name)
+				p.qb.Pause(job.InfoHash)
+				time.Sleep(2 * time.Second)
+				p.qb.Resume(job.InfoHash)
+				job.Error = "restarting stalled torrent"
+				p.store.Update(job)
 			} else if stalledFor > 1*time.Hour {
 				// 1h stalled — mark as stalled, keep reannouncing.
-				if job.Error != "stalled — waiting for peers" {
+				if job.Error != "stalled — waiting for peers" && job.Error != "restarting stalled torrent" {
 					slog.Warn("torrent stalled for 1h", "job", job.ID, "name", t.Name)
 					job.Error = "stalled — waiting for peers"
 					p.store.Update(job)
