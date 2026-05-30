@@ -19,7 +19,7 @@ type Conn struct {
 }
 
 func Dial(creds *Credentials) (*Conn, error) {
-	addr := fmt.Sprintf("%s:%d", creds.Host, creds.Port)
+	addr := net.JoinHostPort(creds.Host, fmt.Sprintf("%d", creds.Port))
 
 	var rawConn net.Conn
 	var err error
