@@ -58,6 +58,11 @@ func migrate(db *sql.DB) error {
 
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs(status, priority DESC, created_at ASC)`)
 
+	db.Exec(`ALTER TABLE jobs ADD COLUMN source TEXT NOT NULL DEFAULT 'torrent'`)
+	db.Exec(`ALTER TABLE jobs ADD COLUMN nzb_data BLOB`)
+	db.Exec(`ALTER TABLE jobs ADD COLUMN imdb_id TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_imdbid ON jobs(imdb_id)`)
+
 	db.Exec(`CREATE TABLE IF NOT EXISTS views (
 		info_hash TEXT NOT NULL,
 		user_id   TEXT NOT NULL,
@@ -73,11 +78,16 @@ func (s *Store) Create(job *Job) error {
 	selected, _ := json.Marshal(job.SelectedIdxs)
 	streams, _ := json.Marshal(job.StreamURLs)
 
+	source := job.Source
+	if source == "" {
+		source = "torrent"
+	}
+
 	_, err := s.db.Exec(`
-		INSERT INTO jobs (id, user_id, info_hash, name, magnet, status, error, files, selected, streams, max_bytes, priority, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		job.ID, job.UserID, job.InfoHash, job.Name, job.Magnet, job.Status, job.Error,
-		string(files), string(selected), string(streams),
+		INSERT INTO jobs (id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, max_bytes, priority, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		job.ID, job.UserID, job.InfoHash, job.Name, job.Magnet, source, job.Status, job.Error,
+		string(files), string(selected), string(streams), job.NZBData, job.IMDBID,
 		job.MaxBytes, job.Priority, job.CreatedAt, job.UpdatedAt,
 	)
 	return err
@@ -101,17 +111,17 @@ func (s *Store) Update(job *Job) error {
 
 func (s *Store) GetByID(id string) (*Job, error) {
 	return s.scanOne(s.db.QueryRow(
-		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE id=?`, id))
+		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE id=?`, id))
 }
 
 func (s *Store) GetByInfoHash(hash string) (*Job, error) {
 	return s.scanOne(s.db.QueryRow(
-		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE info_hash=? ORDER BY created_at DESC LIMIT 1`, hash))
+		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE info_hash=? ORDER BY created_at DESC LIMIT 1`, hash))
 }
 
 func (s *Store) ListByInfoHash(hash string) ([]*Job, error) {
 	return s.queryMany(
-		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE info_hash=?`, hash)
+		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE info_hash=?`, hash)
 }
 
 func (s *Store) List(limit int) ([]*Job, error) {
@@ -119,7 +129,7 @@ func (s *Store) List(limit int) ([]*Job, error) {
 		limit = 50
 	}
 	return s.queryMany(
-		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs ORDER BY created_at DESC LIMIT ?`, limit)
+		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs ORDER BY created_at DESC LIMIT ?`, limit)
 }
 
 func (s *Store) ListByUser(userID string, limit int) ([]*Job, error) {
@@ -127,12 +137,17 @@ func (s *Store) ListByUser(userID string, limit int) ([]*Job, error) {
 		limit = 50
 	}
 	return s.queryMany(
-		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT ?`, userID, limit)
+		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT ?`, userID, limit)
+}
+
+func (s *Store) ListByIMDB(imdbID string) ([]*Job, error) {
+	return s.queryMany(
+		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE imdb_id=? AND status IN ('complete','cached') ORDER BY created_at DESC`, imdbID)
 }
 
 func (s *Store) ListByStatus(status Status) ([]*Job, error) {
 	return s.queryMany(
-		`SELECT id, user_id, info_hash, name, magnet, status, error, files, selected, streams, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE status=? ORDER BY priority DESC, created_at ASC`, string(status))
+		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE status=? ORDER BY priority DESC, created_at ASC`, string(status))
 }
 
 func (s *Store) queryMany(query string, args ...any) ([]*Job, error) {
@@ -156,14 +171,19 @@ func (s *Store) queryMany(query string, args ...any) ([]*Job, error) {
 func (s *Store) scanOne(row *sql.Row) (*Job, error) {
 	j := &Job{}
 	var filesJSON, selectedJSON, streamsJSON string
+	var source sql.NullString
 	err := row.Scan(
 		&j.ID, &j.UserID, &j.InfoHash, &j.Name, &j.Magnet,
-		&j.Status, &j.Error,
-		&filesJSON, &selectedJSON, &streamsJSON,
+		&source, &j.Status, &j.Error,
+		&filesJSON, &selectedJSON, &streamsJSON, &j.NZBData, &j.IMDBID,
 		&j.FileSize, &j.MaxBytes, &j.Priority, &j.CreatedAt, &j.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	j.Source = source.String
+	if j.Source == "" {
+		j.Source = "torrent"
 	}
 	json.Unmarshal([]byte(filesJSON), &j.Files)
 	json.Unmarshal([]byte(selectedJSON), &j.SelectedIdxs)
@@ -174,14 +194,19 @@ func (s *Store) scanOne(row *sql.Row) (*Job, error) {
 func (s *Store) scanRow(rows *sql.Rows) (*Job, error) {
 	j := &Job{}
 	var filesJSON, selectedJSON, streamsJSON string
+	var source sql.NullString
 	err := rows.Scan(
 		&j.ID, &j.UserID, &j.InfoHash, &j.Name, &j.Magnet,
-		&j.Status, &j.Error,
-		&filesJSON, &selectedJSON, &streamsJSON,
+		&source, &j.Status, &j.Error,
+		&filesJSON, &selectedJSON, &streamsJSON, &j.NZBData, &j.IMDBID,
 		&j.FileSize, &j.MaxBytes, &j.Priority, &j.CreatedAt, &j.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	j.Source = source.String
+	if j.Source == "" {
+		j.Source = "torrent"
 	}
 	json.Unmarshal([]byte(filesJSON), &j.Files)
 	json.Unmarshal([]byte(selectedJSON), &j.SelectedIdxs)

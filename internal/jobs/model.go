@@ -20,11 +20,14 @@ type Job struct {
 	InfoHash     string    `json:"info_hash"`
 	Name         string    `json:"name"`
 	Magnet       string    `json:"magnet,omitempty"`
+	Source       string    `json:"source"`
 	Status       Status    `json:"status"`
 	Error        string    `json:"error,omitempty"`
 	Files        []File    `json:"files,omitempty"`
 	SelectedIdxs []int     `json:"selected_indexes,omitempty"`
 	StreamURLs   []Stream  `json:"stream_urls,omitempty"`
+	IMDBID       string    `json:"imdb_id,omitempty"`
+	NZBData      []byte    `json:"-"`
 	FileSize     int64     `json:"file_size"`
 	MaxBytes     int64     `json:"max_bytes"`
 	Priority     int       `json:"priority"`
