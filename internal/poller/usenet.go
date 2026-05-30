@@ -15,7 +15,6 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 		return
 	}
 
-
 	dl := p.usenet.GetDownload(job.InfoHash)
 
 	// Pending usenet job: start the download.

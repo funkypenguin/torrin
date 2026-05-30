@@ -73,7 +73,7 @@ func (b *mockBackend) Authenticate(user, pass string) (nntpserver.Backend, error
 	return nil, fmt.Errorf("auth failed")
 }
 
-func (b *mockBackend) AllowPost() bool                   { return false }
+func (b *mockBackend) AllowPost() bool                    { return false }
 func (b *mockBackend) Post(article *gonntp.Article) error { return fmt.Errorf("no posting") }
 
 // startMockServer starts a mock NNTP server and returns the address + cleanup func.

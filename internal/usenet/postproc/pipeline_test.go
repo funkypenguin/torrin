@@ -11,14 +11,14 @@ func TestCollectFiles_SkipsArchives(t *testing.T) {
 
 	// Create various files.
 	files := map[string]string{
-		"movie.mkv":         "video data",
-		"movie.nfo":         "info",
-		"movie.par2":        "parity",
+		"movie.mkv":           "video data",
+		"movie.nfo":           "info",
+		"movie.par2":          "parity",
 		"movie.vol00+01.par2": "parity vol",
-		"movie.rar":         "archive",
-		"movie.r00":         "archive part",
-		"movie.r01":         "archive part",
-		"subs.srt":          "subtitles",
+		"movie.rar":           "archive",
+		"movie.r00":           "archive part",
+		"movie.r01":           "archive part",
+		"subs.srt":            "subtitles",
 	}
 	for name, content := range files {
 		os.WriteFile(filepath.Join(dir, name), []byte(content), 0644)

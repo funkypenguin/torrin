@@ -77,10 +77,10 @@ func (b *asmBackend) GetArticle(group *gonntp.Group, id string) (*gonntp.Article
 func (b *asmBackend) GetArticles(group *gonntp.Group, from, to int64) ([]nntpserver.NumberedArticle, error) {
 	return nil, nil
 }
-func (b *asmBackend) Authorized() bool                             { return true }
+func (b *asmBackend) Authorized() bool                                           { return true }
 func (b *asmBackend) Authenticate(user, pass string) (nntpserver.Backend, error) { return b, nil }
-func (b *asmBackend) AllowPost() bool                              { return false }
-func (b *asmBackend) Post(article *gonntp.Article) error           { return nil }
+func (b *asmBackend) AllowPost() bool                                            { return false }
+func (b *asmBackend) Post(article *gonntp.Article) error                         { return nil }
 
 func startAsmServer(backend *asmBackend) (string, func()) {
 	srv := nntpserver.NewServer(backend)

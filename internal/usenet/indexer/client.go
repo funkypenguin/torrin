@@ -215,7 +215,6 @@ func extractGUID(link string) string {
 	return link
 }
 
-
 type apiError struct {
 	XMLName     xml.Name `xml:"error"`
 	Code        int      `xml:"code,attr"`
