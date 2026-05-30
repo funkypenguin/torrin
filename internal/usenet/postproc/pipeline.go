@@ -15,7 +15,7 @@ type OutputFile struct {
 	Size int64
 }
 
-func Process(dir string) ([]OutputFile, error) {
+func Process(dir string, jobName ...string) ([]OutputFile, error) {
 	// Step 1: PAR2 repair if par2 files exist.
 	if par2File := findFile(dir, ".par2", "vol"); par2File != "" {
 		slog.Info("running par2 repair", "dir", dir)
@@ -39,7 +39,32 @@ func Process(dir string) ([]OutputFile, error) {
 	}
 
 	// Step 4: Collect output files.
-	return collectFiles(dir)
+	files, err := collectFiles(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 5: Rename obfuscated output files to job name.
+	name := ""
+	if len(jobName) > 0 {
+		name = jobName[0]
+	}
+	if name != "" {
+		for i, f := range files {
+			if isObfuscatedName(f.Name) {
+				ext := filepath.Ext(f.Name)
+				newName := sanitizeFilename(name) + ext
+				newPath := filepath.Join(filepath.Dir(f.Path), newName)
+				if err := os.Rename(f.Path, newPath); err == nil {
+					slog.Info("renamed obfuscated file", "from", f.Name, "to", newName)
+					files[i].Name = newName
+					files[i].Path = newPath
+				}
+			}
+		}
+	}
+
+	return files, nil
 }
 
 // renameObfuscatedRars detects RAR parts with different obfuscated base names
@@ -98,6 +123,27 @@ func renameObfuscatedRars(dir string) {
 			slog.Warn("rename failed", "from", p.name, "to", newName, "err", err)
 		}
 	}
+}
+
+// isObfuscatedName returns true if a filename looks like a random hash.
+func isObfuscatedName(name string) bool {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	if len(base) < 16 {
+		return false
+	}
+	hexCount := 0
+	for _, c := range base {
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			hexCount++
+		}
+	}
+	return float64(hexCount)/float64(len(base)) > 0.8
+}
+
+// sanitizeFilename replaces characters that aren't safe for filenames.
+func sanitizeFilename(name string) string {
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "\"", "", "<", "", ">", "", "|", "", "?", "", "*", "")
+	return replacer.Replace(name)
 }
 
 func findFile(dir, ext, excludeSubstr string) string {

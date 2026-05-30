@@ -28,6 +28,7 @@ const (
 
 type Download struct {
 	NZBHash   string
+	NZBName   string
 	UserID    string
 	Status    DownloadStatus
 	Progress  float64
@@ -62,7 +63,7 @@ func NewManager(credProvider CredentialProvider, downloadDir string) *Manager {
 	return m
 }
 
-func (m *Manager) Submit(ctx context.Context, userID string, nzbData []byte) (string, error) {
+func (m *Manager) Submit(ctx context.Context, userID string, nzbData []byte, jobName ...string) (string, error) {
 	parsed, err := nzb.ParseBytes(nzbData)
 	if err != nil {
 		return "", fmt.Errorf("parse nzb: %w", err)
@@ -81,8 +82,13 @@ func (m *Manager) Submit(ctx context.Context, userID string, nzbData []byte) (st
 
 	dlCtx, cancel := context.WithCancel(ctx)
 	now := time.Now()
+	dlName := parsed.Name()
+	if len(jobName) > 0 && jobName[0] != "" {
+		dlName = jobName[0]
+	}
 	dl := &Download{
 		NZBHash:        hash,
+		NZBName:        dlName,
 		UserID:         userID,
 		Status:         StatusDownloading,
 		OutputDir:      filepath.Join(m.downloadDir, hash),
@@ -203,7 +209,7 @@ func (m *Manager) run(ctx context.Context, dl *Download, parsed *nzb.NZB, pool *
 	dl.mu.Unlock()
 
 	slog.Info("usenet post-processing", "hash", dl.NZBHash)
-	outputFiles, err := postproc.Process(dl.OutputDir)
+	outputFiles, err := postproc.Process(dl.OutputDir, dl.NZBName)
 	if err != nil {
 		dl.mu.Lock()
 		dl.Status = StatusFailed

@@ -32,7 +32,7 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 			return
 		}
 
-		_, err := p.usenet.Submit(ctx, job.UserID, job.NZBData)
+		_, err := p.usenet.Submit(ctx, job.UserID, job.NZBData, job.Name)
 		if err != nil {
 			p.Release(job.FileSize)
 			job.Status = jobs.StatusFailed
