@@ -45,6 +45,32 @@ type Download struct {
 	cancel         context.CancelFunc
 }
 
+// Snapshot is a consistent, copy-by-value view of a Download's mutable
+// state. The fields guarded by Download.mu (Status, Progress, Speed,
+// Error, Files) are written by the manager's download goroutine, so any
+// other goroutine — notably the poller — must read them through Snapshot
+// rather than touching the fields directly, or it races the writer.
+type Snapshot struct {
+	Status   DownloadStatus
+	Progress float64
+	Speed    int64
+	Error    string
+	Files    []postproc.OutputFile
+}
+
+// Snapshot returns the Download's mutable state under the lock.
+func (d *Download) Snapshot() Snapshot {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return Snapshot{
+		Status:   d.Status,
+		Progress: d.Progress,
+		Speed:    d.Speed,
+		Error:    d.Error,
+		Files:    d.Files,
+	}
+}
+
 type Manager struct {
 	credProvider CredentialProvider
 	pools        sync.Map
