@@ -18,8 +18,12 @@ comet/
 web/
 worker/
 docker-compose.yml
+docker-compose.staging.yml
 Dockerfile.*
-.env.example
+!docker-compose.example.yml
+!.env.example
+push.sh
+litestream.yml
 
 # Tools
 .DS_Store

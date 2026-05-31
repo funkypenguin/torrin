@@ -1,0 +1,64 @@
+services:
+  # VPN — qBittorrent routes all traffic through this.
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: torrin-vpn
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-airvpn}
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${VPN_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${VPN_PRESHARED_KEY}
+      - SERVER_COUNTRIES=Netherlands
+      - FIREWALL_INPUT_PORTS=8080,6881
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+    restart: unless-stopped
+
+  # qBittorrent — torrent engine.
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: torrin-qbit
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      - WEBUI_PORT=8080
+    volumes:
+      - ./qbit-config:/config
+      - ./downloads:/downloads
+    restart: unless-stopped
+
+  # API — REST API + qBit poller + R2 uploader.
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: torrin-api
+    ports:
+      - "${API_PORT:-9090}:9090"
+    environment:
+      - QBIT_URL=http://gluetun:8080
+      - QBIT_USERNAME=${QBIT_USERNAME:-admin}
+      - QBIT_PASSWORD=${QBIT_PASSWORD}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID}
+      - R2_ACCESS_KEY=${R2_ACCESS_KEY}
+      - R2_SECRET_KEY=${R2_SECRET_KEY}
+      - R2_BUCKET=${R2_BUCKET:-torrin-media}
+      - R2_PUBLIC_URL=${R2_PUBLIC_URL}
+      - SIGNING_KEY=${SIGNING_KEY}
+      - DB_PATH=/data/torrin.db
+      - AUTH_DB_PATH=/data/auth.db
+    volumes:
+      - ./data:/data
+      - ./downloads:/downloads
+    depends_on:
+      - gluetun
+    restart: unless-stopped
