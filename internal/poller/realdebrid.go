@@ -45,10 +45,24 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 	}
 
 	var videoFileIDs []string
+	var totalVideoSize int64
 	for _, f := range info.Files {
 		if isVideoFile(f.Path) {
 			videoFileIDs = append(videoFileIDs, fmt.Sprintf("%d", f.ID))
+			totalVideoSize += f.Bytes
 		}
+	}
+
+	// Size check against plan limit.
+	if job.MaxBytes > 0 && totalVideoSize > job.MaxBytes {
+		maxGB := job.MaxBytes / (1024 * 1024 * 1024)
+		actualGB := totalVideoSize / (1024 * 1024 * 1024)
+		log.Warn("rd torrent exceeds plan size limit", "size_gb", actualGB, "max_gb", maxGB)
+		job.Status = jobs.StatusFailed
+		job.Error = fmt.Sprintf("torrent size %dGB exceeds your plan limit of %dGB", actualGB, maxGB)
+		p.store.Update(job)
+		p.rd.DeleteTorrent(ctx, rdID)
+		return true
 	}
 	if len(videoFileIDs) == 0 {
 		// No video files found in file list, select all and hope for the best xD.
