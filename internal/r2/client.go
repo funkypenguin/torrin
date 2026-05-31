@@ -80,8 +80,8 @@ func (c *Client) UploadFile(ctx context.Context, key string, reader io.Reader, c
 
 func (c *Client) StreamUpload(ctx context.Context, key string, reader io.Reader, contentType string) error {
 	uploader := manager.NewUploader(c.s3, func(u *manager.Uploader) {
-		u.PartSize = 10 * 1024 * 1024
-		u.Concurrency = 5
+		u.PartSize = 32 * 1024 * 1024
+		u.Concurrency = 8
 		u.LeavePartsOnError = false
 	})
 
