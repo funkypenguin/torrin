@@ -18,10 +18,10 @@ type Policy struct {
 }
 
 var DefaultPolicy = Policy{
-	NeverAccessedTTL: 7,
-	StandardTTL:      30,
-	PopularTTL:       60,
-	StorageCapBytes:  450 * 1024 * 1024 * 1024,
+	NeverAccessedTTL: 3,
+	StandardTTL:      14,
+	PopularTTL:       45,
+	StorageCapBytes:  300 * 1024 * 1024 * 1024,
 }
 
 // Engine handles cache eviction.
