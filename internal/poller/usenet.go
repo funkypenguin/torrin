@@ -72,12 +72,16 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 		return
 	}
 
-	switch dl.Status {
+	// Read the download's mutable state once, under its lock; the manager's
+	// download goroutine writes these fields concurrently.
+	snap := dl.Snapshot()
+
+	switch snap.Status {
 	case usenet.StatusDownloading:
 		job.Status = jobs.StatusProcessing
 		// Show progress and speed.
-		pct := int(dl.Progress * 100)
-		speedMB := dl.Speed / (1024 * 1024)
+		pct := int(snap.Progress * 100)
+		speedMB := snap.Speed / (1024 * 1024)
 		progressMsg := fmt.Sprintf("downloading — %d%% (%d MB/s)", pct, speedMB)
 		if job.Error != progressMsg {
 			job.Error = progressMsg
@@ -92,7 +96,7 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 
 	case usenet.StatusFailed:
 		job.Status = jobs.StatusFailed
-		job.Error = dl.Error
+		job.Error = snap.Error
 		p.store.Update(job)
 		p.usenet.CleanupFiles(job.InfoHash)
 		p.Release(job.FileSize)
@@ -102,11 +106,11 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 			return
 		}
 		slog.Info("usenet download complete, uploading to R2", "job", job.ID, "name", job.Name)
-		go func(j *jobs.Job) {
+		go func(j *jobs.Job, files []usenet.OutputFile) {
 			defer p.uploading.Delete(j.InfoHash)
-			p.uploadLocalFiles(ctx, j, dl.Files)
+			p.uploadLocalFiles(ctx, j, files)
 			p.usenet.CleanupFiles(j.InfoHash)
 			p.Release(j.FileSize)
-		}(job)
+		}(job, snap.Files)
 	}
 }
