@@ -10,22 +10,30 @@ import (
 	"github.com/torrin-app/torrin/internal/jobs"
 	"github.com/torrin-app/torrin/internal/qbit"
 	"github.com/torrin-app/torrin/internal/r2"
+	"github.com/torrin-app/torrin/internal/realdebrid"
 	"github.com/torrin-app/torrin/internal/usenet"
 )
 
 type Poller struct {
-	qb         *qbit.Client
-	usenet     *usenet.Manager
-	r2         *r2.Client
-	store      *jobs.Store
-	interval   time.Duration
-	budgetMax  int64
-	budgetUsed int64
-	uploading  sync.Map
+	qb            *qbit.Client
+	usenet        *usenet.Manager
+	rd            *realdebrid.Client
+	rdDownloadDir string
+	r2            *r2.Client
+	store         *jobs.Store
+	interval      time.Duration
+	budgetMax     int64
+	budgetUsed    int64
+	uploading     sync.Map
 }
 
 func (p *Poller) SetUsenetManager(m *usenet.Manager) {
 	p.usenet = m
+}
+
+func (p *Poller) SetRealDebrid(client *realdebrid.Client, downloadDir string) {
+	p.rd = client
+	p.rdDownloadDir = downloadDir
 }
 
 func New(qb *qbit.Client, r2 *r2.Client, store *jobs.Store, interval time.Duration) *Poller {
@@ -145,6 +153,16 @@ func (p *Poller) poll(ctx context.Context) {
 		if job.Source == "usenet" {
 			p.pollUsenetJob(ctx, job)
 			continue
+		}
+
+		if _, rdActive := p.uploading.Load(job.InfoHash); rdActive {
+			continue
+		}
+
+		if job.Status == jobs.StatusPending && p.rd != nil {
+			if p.tryRealDebrid(ctx, job) {
+				continue
+			}
 		}
 
 		if !qbOk {

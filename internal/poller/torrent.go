@@ -16,9 +16,9 @@ import (
 func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 	t, err := p.qb.GetTorrent(job.InfoHash)
 	if err != nil {
-		if job.Status == jobs.StatusQueued && job.Magnet != "" {
+		if (job.Status == jobs.StatusQueued || job.Status == jobs.StatusPending) && job.Magnet != "" {
 			p.tryAddQueued(job)
-		} else if job.Status == jobs.StatusProcessing || job.Status == jobs.StatusPending {
+		} else if job.Status == jobs.StatusProcessing {
 			if time.Since(job.UpdatedAt) > 30*time.Second {
 				job.Status = jobs.StatusFailed
 				job.Error = "torrent removed from download engine"
