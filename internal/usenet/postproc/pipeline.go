@@ -195,7 +195,7 @@ func runPar2(par2File string) error {
 }
 
 func runUnrar(rarFile, outputDir string) error {
-	cmd := exec.Command("unrar", "x", "-o+", "-y", rarFile, outputDir+"/")
+	cmd := exec.Command("unrar", "e", "-o+", "-y", rarFile, outputDir+"/")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
@@ -230,10 +230,15 @@ func isRarPart(name string) bool {
 }
 
 func collectFiles(dir string) ([]OutputFile, error) {
+	cleanDir := filepath.Clean(dir)
 	var files []OutputFile
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return err
+		}
+		if !strings.HasPrefix(filepath.Clean(path), cleanDir+string(os.PathSeparator)) {
+			slog.Warn("skipping file outside output dir", "path", path)
+			return nil
 		}
 		name := strings.ToLower(info.Name())
 		if strings.HasSuffix(name, ".par2") || strings.HasSuffix(name, ".nzb") {

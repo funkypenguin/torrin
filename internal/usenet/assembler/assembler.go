@@ -116,7 +116,11 @@ func (a *Assembler) downloadFile(ctx context.Context, file nzb.File, outputDir s
 			filename = fmt.Sprintf("file_%d", segments[0].Number)
 		}
 	}
+	filename = filepath.Base(filename)
 	outPath := filepath.Join(outputDir, filename)
+	if !strings.HasPrefix(outPath, filepath.Clean(outputDir)+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("unsafe filename rejected: %s", filename)
+	}
 
 	// Open file upfront for streaming writes.
 	f, err := os.Create(outPath)
