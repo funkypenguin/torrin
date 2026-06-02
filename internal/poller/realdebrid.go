@@ -379,7 +379,7 @@ func (p *Poller) downloadRDFileWithProgress(ctx context.Context, rdClient *reald
 			if time.Since(lastUpdate) >= 2*time.Second {
 				elapsed := time.Since(lastUpdate).Seconds()
 				speed := float64(written-lastBytes) / elapsed
-				speedMB := int(speed / (1024 * 1024))
+				speedBps := int64(speed)
 				filePct := 0.0
 				if totalSize > 0 {
 					filePct = float64(written) / float64(totalSize)
@@ -387,9 +387,9 @@ func (p *Poller) downloadRDFileWithProgress(ctx context.Context, rdClient *reald
 				overallPct := int((float64(fileIdx) + filePct) / float64(fileCount) * 100)
 				var msg string
 				if fileCount > 1 {
-					msg = fmt.Sprintf("downloading — %d%% (%d/%d, %d MB/s)", overallPct, fileIdx+1, fileCount, speedMB)
+					msg = fmt.Sprintf("downloading — %d%% (%d/%d, %d B/s)", overallPct, fileIdx+1, fileCount, speedBps)
 				} else {
-					msg = fmt.Sprintf("downloading — %d%% (%d MB/s)", overallPct, speedMB)
+					msg = fmt.Sprintf("downloading — %d%% (%d B/s)", overallPct, speedBps)
 				}
 				if job.Error != msg {
 					job.Error = msg
