@@ -93,10 +93,16 @@ func (a *Assembler) downloadFile(ctx context.Context, file nzb.File, outputDir s
 		filename = extractFilename(file.Subject)
 	}
 
+	// Use the first group from the NZB file for GROUP selection.
+	group := ""
+	if len(file.Groups) > 0 {
+		group = file.Groups[0]
+	}
+
 	// If still no filename, peek the first segment's yEnc header.
 	var firstSegData []byte
 	if filename == "" {
-		data, err := a.fetchSegment(segments[0].MessageID)
+		data, err := a.fetchSegment(segments[0].MessageID, group)
 		if err != nil {
 			return nil, fmt.Errorf("peek segment: %w", err)
 		}
@@ -104,6 +110,9 @@ func (a *Assembler) downloadFile(ctx context.Context, file nzb.File, outputDir s
 		// Try raw body for yEnc name (fetchSegment already decoded, so re-fetch raw).
 		conn, cerr := a.pool.Get()
 		if cerr == nil {
+			if group != "" {
+				conn.Group(group)
+			}
 			raw, berr := conn.Body(segments[0].MessageID)
 			a.pool.Put(conn)
 			if berr == nil {
@@ -171,7 +180,7 @@ func (a *Assembler) downloadFile(ctx context.Context, file nzb.File, outputDir s
 						return
 					}
 					seg := segments[idx]
-					data, err := a.fetchSegment(seg.MessageID)
+					data, err := a.fetchSegment(seg.MessageID, group)
 					resultCh <- segResult{index: idx, data: data, err: err}
 				}
 			}()
@@ -233,8 +242,8 @@ func (a *Assembler) downloadFile(ctx context.Context, file nzb.File, outputDir s
 	}, nil
 }
 
-func (a *Assembler) fetchSegment(messageID string) ([]byte, error) {
-	// Retry up to 3 times on failure.
+func (a *Assembler) fetchSegment(messageID, group string) ([]byte, error) {
+	// Retry up to 3 times on failure, with fresh connections on retry.
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		conn, err := a.pool.Get()
@@ -243,8 +252,18 @@ func (a *Assembler) fetchSegment(messageID string) ([]byte, error) {
 			continue
 		}
 
+		// Select group before BODY.
+		if group != "" {
+			if err := conn.Group(group); err != nil {
+				a.pool.Discard(conn)
+				lastErr = err
+				continue
+			}
+		}
+
 		body, err := conn.Body(messageID)
 		if err != nil {
+			slog.Warn("segment fetch failed", "id", messageID, "attempt", attempt+1, "err", err)
 			a.pool.Discard(conn)
 			lastErr = err
 			continue

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -27,6 +28,9 @@ func Process(dir string, jobName ...string) ([]OutputFile, error) {
 
 	// Step 2: Rename obfuscated RAR parts to consistent base name.
 	renameObfuscatedRars(dir)
+
+	// Step 2b: Detect obfuscated RARs by magic bytes (e.g. hash.01, hash.02).
+	renameObfuscatedRarsByMagic(dir)
 
 	// Step 3: RAR extraction if rar files exist.
 	if rarFile := findFirstRar(dir); rarFile != "" {
@@ -125,19 +129,46 @@ func renameObfuscatedRars(dir string) {
 	}
 }
 
-// isObfuscatedName returns true if a filename looks like a random hash.
 func isObfuscatedName(name string) bool {
 	base := strings.TrimSuffix(name, filepath.Ext(name))
-	if len(base) < 16 {
+	if len(base) < 12 {
 		return false
 	}
+
+	// Check 1: no word separators (spaces, dots, hyphens, underscores) in a long string.
+	// Real media names like "Avengers.Infinity.War.2018.1080p" have dots/spaces.
+	// Obfuscated names like "dQQ2uEXRNkeSPdX23RJ12y" don't.
+	if len(base) >= 16 && !strings.ContainsAny(base, " .-_") {
+		return true
+	}
+
+	// Check 2: hex hash (>80% hex chars).
 	hexCount := 0
 	for _, c := range base {
 		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
 			hexCount++
 		}
 	}
-	return float64(hexCount)/float64(len(base)) > 0.8
+	if len(base) >= 16 && float64(hexCount)/float64(len(base)) > 0.8 {
+		return true
+	}
+
+	// Check 3: low vowel ratio (random strings ~27% vowels, English ~38%).
+	vowels := 0
+	letters := 0
+	for _, c := range strings.ToLower(base) {
+		if c >= 'a' && c <= 'z' {
+			letters++
+			if c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u' {
+				vowels++
+			}
+		}
+	}
+	if letters > 10 && !strings.ContainsAny(base, " ") && float64(vowels)/float64(letters) < 0.15 {
+		return true
+	}
+
+	return false
 }
 
 // sanitizeFilename replaces characters that aren't safe for filenames.
@@ -215,6 +246,190 @@ func cleanArchives(dir string) {
 			os.Remove(filepath.Join(dir, e.Name()))
 		}
 	}
+}
+
+// renameObfuscatedRarsByMagic detects RAR files that have no .rar extension
+// (e.g. hash.01, hash.02) by reading file headers and volume numbers, then
+// renames them to archive.partNNN.rar so unrar can chain them correctly.
+func renameObfuscatedRarsByMagic(dir string) {
+	entries, _ := os.ReadDir(dir)
+
+	for _, e := range entries {
+		name := strings.ToLower(e.Name())
+		if strings.HasSuffix(name, ".rar") {
+			return
+		}
+	}
+
+	// Collect non-par2 files that have RAR magic bytes, reading volume number from header.
+	type rarFile struct {
+		name   string
+		path   string
+		volNum int
+	}
+	var rars []rarFile
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		if strings.HasSuffix(name, ".par2") || strings.HasSuffix(name, ".nzb") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		volNum := rarVolumeNumber(path)
+		if volNum >= 0 {
+			rars = append(rars, rarFile{name: e.Name(), path: path, volNum: volNum})
+		}
+	}
+
+	if len(rars) == 0 {
+		return
+	}
+
+	slog.Info("detected obfuscated RAR volumes by header", "count", len(rars))
+
+	sort.Slice(rars, func(i, j int) bool {
+		vi, vj := rars[i].volNum, rars[j].volNum
+		if vi >= 0 && vj >= 0 && vi != vj {
+			return vi < vj
+		}
+		return extractTrailingNumber(rars[i].name) < extractTrailingNumber(rars[j].name)
+	})
+
+	for i, r := range rars {
+		newName := fmt.Sprintf("archive.part%03d.rar", i+1)
+		newPath := filepath.Join(dir, newName)
+		if err := os.Rename(r.path, newPath); err != nil {
+			slog.Warn("rename obfuscated rar failed", "from", r.name, "to", newName, "err", err)
+		}
+	}
+}
+
+func extractTrailingNumber(name string) int {
+	ext := filepath.Ext(name)
+	if ext == "" {
+		return 0
+	}
+	ext = ext[1:]
+	n := 0
+	for _, c := range ext {
+		if c >= '0' && c <= '9' {
+			n = n*10 + int(c-'0')
+		} else {
+			return 0
+		}
+	}
+	return n
+}
+
+func rarVolumeNumber(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
+		return -1
+	}
+	defer f.Close()
+
+	buf := make([]byte, 64)
+	n, _ := f.Read(buf)
+	if n < 12 {
+		return -1
+	}
+
+	// Check RAR5 signature: Rar!\x1a\x07\x01\x00
+	if buf[0] == 'R' && buf[1] == 'a' && buf[2] == 'r' && buf[3] == '!' &&
+		buf[4] == 0x1a && buf[5] == 0x07 && buf[6] == 0x01 && buf[7] == 0x00 {
+		return rar5VolumeNumber(buf[8:n])
+	}
+
+	// Check RAR4 signature: Rar!\x1a\x07\x00
+	if buf[0] == 'R' && buf[1] == 'a' && buf[2] == 'r' && buf[3] == '!' &&
+		buf[4] == 0x1a && buf[5] == 0x07 && buf[6] == 0x00 {
+		return rar4VolumeNumber(buf[7:n])
+	}
+
+	return -1
+}
+
+// rar5VolumeNumber parses RAR5 main archive header to extract volume number.
+func rar5VolumeNumber(data []byte) int {
+	if len(data) < 4 {
+		return 0
+	}
+	off := 4
+	headerSize, n := readVint(data[off:])
+	if n == 0 || headerSize == 0 {
+		return 0
+	}
+	off += n
+	headerType, n := readVint(data[off:])
+	if n == 0 {
+		return 0
+	}
+	off += n
+	if headerType != 1 {
+		return 0
+	}
+	headerFlags, n := readVint(data[off:])
+	if n == 0 {
+		return 0
+	}
+	off += n
+	if headerFlags&0x0001 != 0 {
+		_, n = readVint(data[off:])
+		off += n
+	}
+	if headerFlags&0x0002 != 0 {
+		_, n = readVint(data[off:])
+		off += n
+	}
+	if off >= len(data) {
+		return 0
+	}
+	archiveFlags, n := readVint(data[off:])
+	if n == 0 {
+		return 0
+	}
+	off += n
+	if archiveFlags&0x0002 != 0 && off < len(data) {
+		volNum, _ := readVint(data[off:])
+		return int(volNum)
+	}
+	return 0
+}
+
+func rar4VolumeNumber(data []byte) int {
+	if len(data) < 14 {
+		return 0
+	}
+	mainHead := data[7:]
+	if len(mainHead) < 7 {
+		return 0
+	}
+	flags := uint16(mainHead[3]) | uint16(mainHead[4])<<8
+	isVolume := flags&0x0001 != 0
+	isFirstVolume := flags&0x0100 != 0
+	if !isVolume {
+		return 0
+	}
+	if isFirstVolume {
+		return 0
+	}
+	return 1
+}
+
+func readVint(data []byte) (uint64, int) {
+	var val uint64
+	for i, b := range data {
+		if i >= 10 {
+			return 0, 0
+		}
+		val |= uint64(b&0x7f) << (7 * uint(i))
+		if b&0x80 == 0 {
+			return val, i + 1
+		}
+	}
+	return 0, 0
 }
 
 // isRarPart matches .r00, .r01, etc.

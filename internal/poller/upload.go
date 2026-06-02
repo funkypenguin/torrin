@@ -77,7 +77,7 @@ func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.T
 		job.Error = "no video files found"
 		p.store.Update(job)
 		p.deleteAndVerify(job.InfoHash, t)
-		p.Release(t.Size)
+		p.ReleaseFor(job.InfoHash)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.T
 	}
 
 	p.deleteAndVerify(job.InfoHash, t)
-	p.Release(t.Size)
+	p.ReleaseFor(job.InfoHash)
 
 	slog.Info("job complete", "job", job.ID, "name", job.Name, "streams", len(streamURLs), "users", len(siblings))
 }

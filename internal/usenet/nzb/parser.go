@@ -2,6 +2,7 @@ package nzb
 
 import (
 	"fmt"
+	"html"
 	"io"
 
 	"github.com/Tensai75/nzbparser"
@@ -58,7 +59,7 @@ func ParseBytes(data []byte) (*NZB, error) {
 		}
 		for _, s := range f.Segments {
 			file.Segments = append(file.Segments, Segment{
-				MessageID: s.Id,
+				MessageID: html.UnescapeString(s.Id),
 				Number:    s.Number,
 				Bytes:     int64(s.Bytes),
 			})

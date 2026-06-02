@@ -84,7 +84,7 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 		job.Error = fmt.Sprintf("torrent error: %s", t.State)
 		p.store.Update(job)
 		p.deleteAndVerify(job.InfoHash, t)
-		p.Release(t.Size)
+		p.ReleaseFor(job.InfoHash)
 		return
 	}
 
@@ -103,7 +103,7 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 			job.Error = "torrent stalled — no peers available"
 			p.store.Update(job)
 			p.deleteAndVerify(job.InfoHash, t)
-			p.Release(t.Size)
+			p.ReleaseFor(job.InfoHash)
 			return
 		} else if stalledFor > 2*time.Hour && job.Error != "restarting stalled torrent" {
 			// 2h stalled — force stop+start (once).
@@ -137,7 +137,7 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 			job.Error = "could not find torrent metadata — invalid or dead magnet"
 			p.store.Update(job)
 			p.deleteAndVerify(job.InfoHash, t)
-			p.Release(t.Size)
+			p.ReleaseFor(job.InfoHash)
 			return
 		} else if stalledFor > 5*time.Minute {
 			p.qb.Reannounce(job.InfoHash)
@@ -165,16 +165,16 @@ func (p *Poller) tryAddQueued(job *jobs.Job) {
 		estimatedSize = 5 * 1024 * 1024 * 1024
 	}
 
-	if !p.Reserve(estimatedSize) {
+	if !p.ReserveFor(job.InfoHash, estimatedSize) {
 		return
 	}
 
 	if err := p.qb.Login(); err != nil {
-		p.Release(estimatedSize)
+		p.ReleaseFor(job.InfoHash)
 		return
 	}
 	if err := p.qb.AddMagnet(job.Magnet); err != nil {
-		p.Release(estimatedSize)
+		p.ReleaseFor(job.InfoHash)
 		slog.Warn("failed to add queued job to qbit", "job", job.ID, "err", err)
 		return
 	}

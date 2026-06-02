@@ -15,19 +15,20 @@ import (
 )
 
 type Poller struct {
-	qb            *qbit.Client
-	usenet        *usenet.Manager
-	rd            *realdebrid.Client
-	rdKeyProvider realdebrid.KeyProvider
-	rdHashLookup  realdebrid.HashLookup
-	rdDownloadDir string
-	r2            *r2.Client
-	store         *jobs.Store
-	interval      time.Duration
-	budgetMax     int64
-	budgetUsed    int64
-	uploading     sync.Map
-	rdSkip        sync.Map
+	qb             *qbit.Client
+	usenet         *usenet.Manager
+	rd             *realdebrid.Client
+	rdKeyProvider  realdebrid.KeyProvider
+	rdHashLookup   realdebrid.HashLookup
+	rdDownloadDir  string
+	r2             *r2.Client
+	store          *jobs.Store
+	interval       time.Duration
+	budgetMax      int64
+	budgetUsed     int64
+	budgetReserved sync.Map // infoHash -> int64 reserved amount
+	uploading      sync.Map
+	rdSkip         sync.Map
 }
 
 func (p *Poller) SetUsenetManager(m *usenet.Manager) {
@@ -81,6 +82,22 @@ func (p *Poller) Reserve(bytes int64) bool {
 
 func (p *Poller) Release(bytes int64) {
 	atomic.AddInt64(&p.budgetUsed, -bytes)
+}
+
+// ReserveFor reserves budget and tracks the amount by info hash.
+func (p *Poller) ReserveFor(infoHash string, bytes int64) bool {
+	if !p.Reserve(bytes) {
+		return false
+	}
+	p.budgetReserved.Store(infoHash, bytes)
+	return true
+}
+
+// ReleaseFor releases whatever was reserved for this info hash.
+func (p *Poller) ReleaseFor(infoHash string) {
+	if v, ok := p.budgetReserved.LoadAndDelete(infoHash); ok {
+		p.Release(v.(int64))
+	}
 }
 
 func (p *Poller) Run(ctx context.Context) {

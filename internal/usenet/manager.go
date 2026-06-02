@@ -264,6 +264,12 @@ func (m *Manager) run(ctx context.Context, dl *Download, parsed *nzb.NZB, pool *
 	slog.Info("usenet download complete", "hash", dl.NZBHash, "files", len(dl.Files))
 }
 
+func (m *Manager) FlushPool(userID string) {
+	if v, ok := m.pools.LoadAndDelete(userID); ok {
+		v.(*nntp.Pool).Close()
+	}
+}
+
 func (m *Manager) getPool(ctx context.Context, userID string) (*nntp.Pool, error) {
 	if v, ok := m.pools.Load(userID); ok {
 		return v.(*nntp.Pool), nil
