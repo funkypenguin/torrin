@@ -27,6 +27,7 @@ type Poller struct {
 	budgetMax     int64
 	budgetUsed    int64
 	uploading     sync.Map
+	rdSkip        sync.Map
 }
 
 func (p *Poller) SetUsenetManager(m *usenet.Manager) {
@@ -170,8 +171,11 @@ func (p *Poller) poll(ctx context.Context) {
 		}
 
 		if job.Status == jobs.StatusPending && p.rd != nil {
-			if p.tryRealDebrid(ctx, job) {
-				continue
+			if _, skip := p.rdSkip.Load(job.InfoHash); !skip {
+				if p.tryRealDebrid(ctx, job) {
+					continue
+				}
+				p.rdSkip.Store(job.InfoHash, true)
 			}
 		}
 
