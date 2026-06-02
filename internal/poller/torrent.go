@@ -57,6 +57,7 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 		}
 
 		p.qb.Resume(job.InfoHash)
+		job.Status = jobs.StatusProcessing
 		p.store.Update(job)
 		slog.Info("metadata received, size ok, resuming",
 			"job", job.ID, "name", t.Name,
