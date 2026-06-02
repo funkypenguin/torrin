@@ -51,7 +51,7 @@ worker/             # Streaming CDN worker
 
 The `comet/` directory contains an open-source Stremio addon (forked from [Comet](https://github.com/g0ldyy/comet)) that works with a self-hosted Torrin instance. It is intended as a **reference design for addon developers** -- not as the primary way to use Torrin with Stremio.
 
-**Casual users:** Use the [ElfHosted](https://elfhosted.com) managed instance. No setup required.
+**Casual users:** Use the [ElfHosted managed instance](https://torrin.elfhosted.com/configure). No setup required.
 
 **addon.torrin.app** is Torrin's managed instance of this addon. Self-hosters can deploy their own using the code in `comet/`.
 
