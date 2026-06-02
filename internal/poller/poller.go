@@ -18,6 +18,8 @@ type Poller struct {
 	qb            *qbit.Client
 	usenet        *usenet.Manager
 	rd            *realdebrid.Client
+	rdKeyProvider realdebrid.KeyProvider
+	rdHashLookup  realdebrid.HashLookup
 	rdDownloadDir string
 	r2            *r2.Client
 	store         *jobs.Store
@@ -34,6 +36,14 @@ func (p *Poller) SetUsenetManager(m *usenet.Manager) {
 func (p *Poller) SetRealDebrid(client *realdebrid.Client, downloadDir string) {
 	p.rd = client
 	p.rdDownloadDir = downloadDir
+}
+
+func (p *Poller) SetRDKeyProvider(provider realdebrid.KeyProvider) {
+	p.rdKeyProvider = provider
+}
+
+func (p *Poller) SetRDHashLookup(lookup realdebrid.HashLookup) {
+	p.rdHashLookup = lookup
 }
 
 func New(qb *qbit.Client, r2 *r2.Client, store *jobs.Store, interval time.Duration) *Poller {

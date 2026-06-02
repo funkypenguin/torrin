@@ -64,6 +64,15 @@ func (c *Client) Unrestrict(ctx context.Context, link string) (*UnrestrictRespon
 	return &resp, nil
 }
 
+func (c *Client) ListTorrents(ctx context.Context, page, limit int) ([]Torrent, error) {
+	var resp []Torrent
+	path := fmt.Sprintf("/torrents?page=%d&limit=%d", page, limit)
+	if err := c.get(ctx, path, &resp); err != nil {
+		return nil, fmt.Errorf("list torrents: %w", err)
+	}
+	return resp, nil
+}
+
 func (c *Client) DeleteTorrent(ctx context.Context, torrentID string) error {
 	return c.del(ctx, "/torrents/delete/"+torrentID)
 }

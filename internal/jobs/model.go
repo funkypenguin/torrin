@@ -43,6 +43,7 @@ type File struct {
 
 type Stream struct {
 	FileName  string `json:"file_name"`
+	Size      int64  `json:"size,omitempty"`
 	DirectURL string `json:"direct_url,omitempty"`
 	SignedURL string `json:"signed_url,omitempty"`
 }

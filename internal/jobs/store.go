@@ -70,6 +70,15 @@ func migrate(db *sql.DB) error {
 		PRIMARY KEY (info_hash, user_id, viewed_on)
 	)`)
 
+	db.Exec(`CREATE TABLE IF NOT EXISTS metrics_snapshots (
+		date TEXT PRIMARY KEY,
+		cached_count INTEGER DEFAULT 0,
+		cached_size INTEGER DEFAULT 0,
+		total_views INTEGER DEFAULT 0,
+		total_users INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+
 	return nil
 }
 
@@ -347,6 +356,51 @@ type GlobalStats struct {
 	TotalJobs        int   `json:"total_jobs"`
 	TotalCachedGB    int64 `json:"total_cached_gb"`
 	TotalAccessCount int64 `json:"total_access_count"`
+}
+
+type MetricsSnapshot struct {
+	Date        string `json:"date"`
+	CachedCount int    `json:"cached_count"`
+	CachedSize  int64  `json:"cached_size"`
+	TotalViews  int    `json:"total_views"`
+	TotalUsers  int    `json:"total_users"`
+}
+
+func (s *Store) RecordDailySnapshot(totalUsers int) error {
+	today := time.Now().Format("2006-01-02")
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO metrics_snapshots (date, cached_count, cached_size, total_views, total_users)
+		VALUES (?,
+			(SELECT COUNT(*) FROM jobs WHERE status IN ('complete','cached')),
+			(SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE status IN ('complete','cached')),
+			(SELECT COALESCE(SUM(access_count), 0) FROM jobs),
+			?
+		)`, today, totalUsers)
+	return err
+}
+
+func (s *Store) GetMetricsHistory(days int) ([]MetricsSnapshot, error) {
+	rows, err := s.db.Query(`
+		SELECT date, cached_count, cached_size, total_views, total_users
+		FROM metrics_snapshots
+		ORDER BY date DESC LIMIT ?`, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []MetricsSnapshot
+	for rows.Next() {
+		var m MetricsSnapshot
+		if err := rows.Scan(&m.Date, &m.CachedCount, &m.CachedSize, &m.TotalViews, &m.TotalUsers); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	if out == nil {
+		out = []MetricsSnapshot{}
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) DB() *sql.DB { return s.db }

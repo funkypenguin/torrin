@@ -50,7 +50,15 @@ func (e *Engine) RunDaily(ctx context.Context) {
 		shouldEvict := false
 		reason := ""
 
-		if c.AccessCount == 0 && c.DaysSinceAccess >= e.policy.NeverAccessedTTL {
+		// Large files (>50GB) get popular-tier retention regardless of views.
+		isLarge := c.FileSize > 50*1024*1024*1024
+
+		if isLarge {
+			if c.DaysSinceAccess >= e.policy.PopularTTL {
+				shouldEvict = true
+				reason = fmt.Sprintf("large file (%dGB), %d days inactive", c.FileSize/(1024*1024*1024), c.DaysSinceAccess)
+			}
+		} else if c.AccessCount == 0 && c.DaysSinceAccess >= e.policy.NeverAccessedTTL {
 			shouldEvict = true
 			reason = fmt.Sprintf("never accessed, %d days old", c.DaysSinceAccess)
 		} else if c.AccessCount > 0 && c.AccessCount < 10 && c.DaysSinceAccess >= e.policy.StandardTTL {

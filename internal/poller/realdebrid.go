@@ -28,8 +28,24 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 
 	log := slog.With("job", job.ID, "hash", job.InfoHash)
 
+	// Use per-user RD key if available, then check hash lookup, otherwise fallback
+	rdClient := p.rd
+	if p.rdKeyProvider != nil {
+		if userKey, err := p.rdKeyProvider.GetRDKey(ctx, job.UserID); err == nil {
+			rdClient = realdebrid.NewClient(userKey)
+			log = log.With("rd_source", "user")
+		}
+	}
+	// Check to see if any synced user already has this hash cached on RD.
+	if rdClient == p.rd && p.rdHashLookup != nil {
+		if lookupKey, err := p.rdHashLookup.FindRDKeyForHash(ctx, job.InfoHash); err == nil && lookupKey != "" {
+			rdClient = realdebrid.NewClient(lookupKey)
+			log = log.With("rd_source", "hash_lookup")
+		}
+	}
+
 	// Step 1: Add magnet to RD.
-	added, err := p.rd.AddMagnet(ctx, job.Magnet)
+	added, err := rdClient.AddMagnet(ctx, job.Magnet)
 	if err != nil {
 		log.Warn("rd add magnet failed, falling through to qbit", "err", err)
 		return false
@@ -37,10 +53,10 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 	rdID := added.ID
 
 	// Step 2: Get torrent info to find video files, then select only those.
-	info, err := p.rd.GetTorrent(ctx, rdID)
+	info, err := rdClient.GetTorrent(ctx, rdID)
 	if err != nil {
 		log.Warn("rd get torrent failed", "err", err)
-		p.rd.DeleteTorrent(ctx, rdID)
+		rdClient.DeleteTorrent(ctx, rdID)
 		return false
 	}
 
@@ -61,7 +77,7 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 		job.Status = jobs.StatusFailed
 		job.Error = fmt.Sprintf("torrent size %dGB exceeds your plan limit of %dGB", actualGB, maxGB)
 		p.store.Update(job)
-		p.rd.DeleteTorrent(ctx, rdID)
+		rdClient.DeleteTorrent(ctx, rdID)
 		return true
 	}
 	if len(videoFileIDs) == 0 {
@@ -70,9 +86,9 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 	}
 
 	selection := strings.Join(videoFileIDs, ",")
-	if err := p.rd.SelectFiles(ctx, rdID, selection); err != nil {
+	if err := rdClient.SelectFiles(ctx, rdID, selection); err != nil {
 		log.Warn("rd select files failed", "err", err)
-		p.rd.DeleteTorrent(ctx, rdID)
+		rdClient.DeleteTorrent(ctx, rdID)
 		return false
 	}
 
@@ -83,10 +99,10 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 	for i := 0; i < 6; i++ {
 		time.Sleep(5 * time.Second)
 
-		t, err := p.rd.GetTorrent(ctx, rdID)
+		t, err := rdClient.GetTorrent(ctx, rdID)
 		if err != nil {
 			log.Warn("rd poll failed", "err", err)
-			p.rd.DeleteTorrent(ctx, rdID)
+			rdClient.DeleteTorrent(ctx, rdID)
 			return false
 		}
 
@@ -98,29 +114,29 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 
 		if t.Status == "error" || t.Status == "dead" || t.Status == "magnet_error" || t.Status == "virus" {
 			log.Info("rd torrent failed, falling through to qbit", "status", t.Status)
-			p.rd.DeleteTorrent(ctx, rdID)
+			rdClient.DeleteTorrent(ctx, rdID)
 			return false
 		}
 
 		// If it's actually downloading (not just resolving) then it's not cached.
 		if t.Status == "downloading" && t.Progress < 100 && t.Progress > 0 {
 			log.Info("not cached on rd, falling through to qbit", "progress", t.Progress)
-			p.rd.DeleteTorrent(ctx, rdID)
+			rdClient.DeleteTorrent(ctx, rdID)
 			return false
 		}
 	}
 
 	if !cached {
 		log.Info("rd did not resolve in time, falling through to qbit")
-		p.rd.DeleteTorrent(ctx, rdID)
+		rdClient.DeleteTorrent(ctx, rdID)
 		return false
 	}
 
 	// Re-fetch to ensure links are populated.
-	torrent, err = p.rd.GetTorrent(ctx, rdID)
+	torrent, err = rdClient.GetTorrent(ctx, rdID)
 	if err != nil {
 		log.Warn("rd re-fetch failed", "err", err)
-		p.rd.DeleteTorrent(ctx, rdID)
+		rdClient.DeleteTorrent(ctx, rdID)
 		return false
 	}
 
@@ -129,13 +145,13 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 
 	if len(torrent.Links) == 0 {
 		log.Warn("rd cached but no links available, falling through to qbit")
-		p.rd.DeleteTorrent(ctx, rdID)
+		rdClient.DeleteTorrent(ctx, rdID)
 		return false
 	}
 
 	// Start the RD download in a goroutine.
 	if _, already := p.uploading.LoadOrStore(job.InfoHash, true); already {
-		p.rd.DeleteTorrent(ctx, rdID)
+		rdClient.DeleteTorrent(ctx, rdID)
 		return true
 	}
 
@@ -146,21 +162,21 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 	}
 	p.store.Update(job)
 
-	go func(j *jobs.Job, t *realdebrid.Torrent, torrentID string) {
+	go func(j *jobs.Job, t *realdebrid.Torrent, torrentID string, rc *realdebrid.Client) {
 		defer p.uploading.Delete(j.InfoHash)
-		p.downloadFromRD(ctx, j, t, torrentID)
-	}(job, torrent, rdID)
+		p.downloadFromRD(ctx, j, t, torrentID, rc)
+	}(job, torrent, rdID, rdClient)
 
 	return true
 }
 
 // downloadFromRD handles downloading from RD after cache hit: unrestrict -> download -> upload to R2.
-func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *realdebrid.Torrent, rdTorrentID string) {
+func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *realdebrid.Torrent, rdTorrentID string, rdClient *realdebrid.Client) {
 	log := slog.With("job", job.ID, "hash", job.InfoHash, "rd_id", rdTorrentID)
 
 	// Cleanup RD torrent when we're done.
 	defer func() {
-		if err := p.rd.DeleteTorrent(ctx, rdTorrentID); err != nil {
+		if err := rdClient.DeleteTorrent(ctx, rdTorrentID); err != nil {
 			log.Warn("rd cleanup failed", "err", err)
 		}
 	}()
@@ -200,7 +216,7 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 			return
 		}
 
-		unrestricted, err := p.rd.Unrestrict(ctx, link)
+		unrestricted, err := rdClient.Unrestrict(ctx, link)
 		if err != nil {
 			log.Warn("rd unrestrict failed", "link", link, "err", err)
 			continue
@@ -215,12 +231,8 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 
 		log.Info("downloading from rd", "file", unrestricted.Filename, "size_mb", unrestricted.FileSize/(1024*1024))
 
-		pct := int(float64(i) / float64(len(torrent.Links)) * 100)
-		job.Error = fmt.Sprintf("downloading — %d%%", pct)
-		p.store.Update(job)
-
 		localPath := filepath.Join(tmpDir, filepath.Base(unrestricted.Filename))
-		if err := p.downloadRDFile(ctx, unrestricted.Download, localPath, job, unrestricted.FileSize); err != nil {
+		if err := p.downloadRDFileWithProgress(ctx, rdClient, unrestricted.Download, localPath, job, unrestricted.FileSize, i, len(torrent.Links)); err != nil {
 			log.Error("rd download failed", "file", unrestricted.Filename, "err", err)
 			job.Status = jobs.StatusFailed
 			job.Error = fmt.Sprintf("download failed: %v", err)
@@ -290,6 +302,7 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 
 		streamURLs = append(streamURLs, jobs.Stream{
 			FileName:  f.Name,
+			Size:      f.Size,
 			DirectURL: r2Key,
 			SignedURL: p.r2.SignURL(r2Key, 24*time.Hour),
 		})
@@ -331,10 +344,9 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 	log.Info("job complete via real-debrid", "name", job.Name, "streams", len(streamURLs), "users", len(siblings))
 }
 
-// downloadRDFile downloads a file from an unrestricted RD URL to a local path,
 // updating the job status with download progress.
-func (p *Poller) downloadRDFile(ctx context.Context, downloadURL, localPath string, job *jobs.Job, totalSize int64) error {
-	body, contentLength, err := p.rd.DownloadFile(ctx, downloadURL)
+func (p *Poller) downloadRDFileWithProgress(ctx context.Context, rdClient *realdebrid.Client, downloadURL, localPath string, job *jobs.Job, totalSize int64, fileIdx, fileCount int) error {
+	body, contentLength, err := rdClient.DownloadFile(ctx, downloadURL)
 	if err != nil {
 		return err
 	}
@@ -350,7 +362,7 @@ func (p *Poller) downloadRDFile(ctx context.Context, downloadURL, localPath stri
 	}
 	defer f.Close()
 
-	buf := make([]byte, 256*1024) // 256KB buffer
+	buf := make([]byte, 256*1024)
 	var written int64
 	lastUpdate := time.Now()
 	lastBytes := int64(0)
@@ -364,16 +376,21 @@ func (p *Poller) downloadRDFile(ctx context.Context, downloadURL, localPath stri
 			}
 			written += int64(n)
 
-			// Update progress every 2 seconds.
 			if time.Since(lastUpdate) >= 2*time.Second {
 				elapsed := time.Since(lastUpdate).Seconds()
 				speed := float64(written-lastBytes) / elapsed
 				speedMB := int(speed / (1024 * 1024))
-				pct := 0
+				filePct := 0.0
 				if totalSize > 0 {
-					pct = int(float64(written) / float64(totalSize) * 100)
+					filePct = float64(written) / float64(totalSize)
 				}
-				msg := fmt.Sprintf("downloading — %d%% (%d MB/s)", pct, speedMB)
+				overallPct := int((float64(fileIdx) + filePct) / float64(fileCount) * 100)
+				var msg string
+				if fileCount > 1 {
+					msg = fmt.Sprintf("downloading — %d%% (%d/%d, %d MB/s)", overallPct, fileIdx+1, fileCount, speedMB)
+				} else {
+					msg = fmt.Sprintf("downloading — %d%% (%d MB/s)", overallPct, speedMB)
+				}
 				if job.Error != msg {
 					job.Error = msg
 					p.store.Update(job)

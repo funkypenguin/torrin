@@ -66,6 +66,7 @@ func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.T
 
 		streamURLs = append(streamURLs, jobs.Stream{
 			FileName:  baseName,
+			Size:      f.Size,
 			DirectURL: r2Key,
 			SignedURL: p.r2.SignURL(r2Key, 24*time.Hour),
 		})
@@ -165,6 +166,7 @@ func (p *Poller) uploadLocalFiles(ctx context.Context, job *jobs.Job, files []us
 
 		streamURLs = append(streamURLs, jobs.Stream{
 			FileName:  f.Name,
+			Size:      f.Size,
 			DirectURL: r2Key,
 			SignedURL: p.r2.SignURL(r2Key, 24*time.Hour),
 		})
