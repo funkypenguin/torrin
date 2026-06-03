@@ -62,7 +62,7 @@ func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.T
 		file.Close()
 		uploadedSize += f.Size
 
-		slog.Info("uploaded", "key", r2Key, "size_mb", f.Size/(1024*1024))
+		slog.Info("uploaded", "key", r2Key, "size_mb", f.Size/1e6)
 
 		streamURLs = append(streamURLs, jobs.Stream{
 			FileName:  baseName,
@@ -162,7 +162,7 @@ func (p *Poller) uploadLocalFiles(ctx context.Context, job *jobs.Job, files []us
 		file.Close()
 		uploadedSize += f.Size
 
-		slog.Info("uploaded", "key", r2Key, "size_mb", f.Size/(1024*1024))
+		slog.Info("uploaded", "key", r2Key, "size_mb", f.Size/1e6)
 
 		streamURLs = append(streamURLs, jobs.Stream{
 			FileName:  f.Name,

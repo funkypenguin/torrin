@@ -17,7 +17,7 @@ func TestTotalSize_EnforcePlanLimits(t *testing.T) {
 				{MessageID: "a@t", Bytes: 500000},
 				{MessageID: "b@t", Bytes: 500000},
 			},
-			maxBytes:  10 * 1024 * 1024 * 1024, // 10GB
+			maxBytes:  10_000_000_000, // 10GB
 			shouldFit: true,
 		},
 		{
@@ -30,7 +30,7 @@ func TestTotalSize_EnforcePlanLimits(t *testing.T) {
 				}
 				return segs
 			}(),
-			maxBytes:  10 * 1024 * 1024 * 1024, // 10GB
+			maxBytes:  10_000_000_000, // 10GB
 			shouldFit: false,
 		},
 		{
@@ -43,7 +43,7 @@ func TestTotalSize_EnforcePlanLimits(t *testing.T) {
 				}
 				return segs
 			}(),
-			maxBytes:  25 * 1024 * 1024 * 1024, // 25GB
+			maxBytes:  25_000_000_000, // 25GB
 			shouldFit: true,
 		},
 		{
@@ -55,7 +55,7 @@ func TestTotalSize_EnforcePlanLimits(t *testing.T) {
 				}
 				return segs
 			}(),
-			maxBytes:  10 * 1024 * 1024 * 1024, // 10GB
+			maxBytes:  10_000_000_000, // 10GB
 			shouldFit: false,
 		},
 		{

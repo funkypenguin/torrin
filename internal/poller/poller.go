@@ -29,6 +29,8 @@ type Poller struct {
 	budgetReserved sync.Map // infoHash -> int64 reserved amount
 	uploading      sync.Map
 	rdSkip         sync.Map
+	rdClients      sync.Map
+	uploadSem      chan struct{}
 }
 
 func (p *Poller) SetUsenetManager(m *usenet.Manager) {
@@ -51,7 +53,8 @@ func (p *Poller) SetRDHashLookup(lookup realdebrid.HashLookup) {
 func New(qb *qbit.Client, r2 *r2.Client, store *jobs.Store, interval time.Duration) *Poller {
 	return &Poller{
 		qb: qb, r2: r2, store: store, interval: interval,
-		budgetMax: 1024 * 1024 * 1024 * 1024,
+		budgetMax: 1_000_000_000_000,
+		uploadSem: make(chan struct{}, 5),
 	}
 }
 
@@ -93,7 +96,15 @@ func (p *Poller) ReserveFor(infoHash string, bytes int64) bool {
 	return true
 }
 
-// ReleaseFor releases whatever was reserved for this info hash.
+func (p *Poller) GetRDClient(apiKey string) *realdebrid.Client {
+	if v, ok := p.rdClients.Load(apiKey); ok {
+		return v.(*realdebrid.Client)
+	}
+	client := realdebrid.NewClient(apiKey)
+	actual, _ := p.rdClients.LoadOrStore(apiKey, client)
+	return actual.(*realdebrid.Client)
+}
+
 func (p *Poller) ReleaseFor(infoHash string) {
 	if v, ok := p.budgetReserved.LoadAndDelete(infoHash); ok {
 		p.Release(v.(int64))
@@ -101,7 +112,7 @@ func (p *Poller) ReleaseFor(infoHash string) {
 }
 
 func (p *Poller) Run(ctx context.Context) {
-	slog.Info("poller started", "interval", p.interval, "budget_gb", p.budgetMax/(1024*1024*1024))
+	slog.Info("poller started", "interval", p.interval, "budget_gb", p.budgetMax/1e9)
 
 	p.cleanupOrphans()
 

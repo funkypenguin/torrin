@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
@@ -95,20 +96,31 @@ func (c *Client) StreamUpload(ctx context.Context, key string, reader io.Reader,
 }
 
 func (c *Client) DeletePrefix(ctx context.Context, prefix string) error {
-	list, err := c.s3.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: &c.bucket,
-		Prefix: &prefix,
-	})
-	if err != nil {
-		return err
-	}
-	for _, obj := range list.Contents {
-		c.s3.DeleteObject(ctx, &s3.DeleteObjectInput{
-			Bucket: &c.bucket,
-			Key:    obj.Key,
+	var continuationToken *string
+	for {
+		list, err := c.s3.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            &c.bucket,
+			Prefix:            &prefix,
+			ContinuationToken: continuationToken,
 		})
+		if err != nil {
+			return err
+		}
+		var lastErr error
+		for _, obj := range list.Contents {
+			if _, err := c.s3.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: &c.bucket,
+				Key:    obj.Key,
+			}); err != nil {
+				lastErr = err
+				slog.Warn("delete object failed", "key", *obj.Key, "err", err)
+			}
+		}
+		if list.IsTruncated == nil || !*list.IsTruncated {
+			return lastErr
+		}
+		continuationToken = list.NextContinuationToken
 	}
-	return nil
 }
 
 func (c *Client) SignURL(path string, expiry time.Duration) string {

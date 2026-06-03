@@ -159,6 +159,10 @@ func (c *Conn) Close() error {
 
 func (c *Conn) command(format string, args ...any) (int, string, error) {
 	cmd := fmt.Sprintf(format, args...)
+	// Reject CRLF in commands to prevent NNTP command injection.
+	if strings.ContainsAny(cmd, "\r\n") {
+		return 0, "", fmt.Errorf("invalid characters in command")
+	}
 	if _, err := io.WriteString(c.writer, cmd+"\r\n"); err != nil {
 		return 0, "", err
 	}

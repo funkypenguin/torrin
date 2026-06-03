@@ -248,18 +248,19 @@ type EvictionCandidate struct {
 
 func (s *Store) GetEvictionCandidates() ([]EvictionCandidate, error) {
 	rows, err := s.db.Query(`
-		SELECT id, info_hash, name, file_size, access_count,
-			CAST(julianday('now') - julianday(COALESCE(last_accessed_at, created_at)) AS INTEGER) as days_inactive
+		SELECT MIN(id), info_hash, MAX(name), MAX(file_size), SUM(access_count),
+			CAST(julianday('now') - julianday(MAX(COALESCE(last_accessed_at, created_at))) AS INTEGER) as days_inactive
 		FROM jobs
 		WHERE status IN ('complete', 'cached')
+		GROUP BY info_hash
 		ORDER BY
 			CASE
-				WHEN access_count = 0 THEN 0
-				WHEN access_count < 10 THEN 1
+				WHEN SUM(access_count) = 0 THEN 0
+				WHEN SUM(access_count) < 10 THEN 1
 				ELSE 2
 			END ASC,
 			days_inactive DESC,
-			file_size DESC`)
+			MAX(file_size) DESC`)
 	if err != nil {
 		return nil, err
 	}

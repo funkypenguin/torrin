@@ -281,11 +281,24 @@ func (c *Client) seriesStreamURL(streamID int, ext string) string {
 }
 
 func (c *Client) GetSeriesStreamURL(streamID int, ext string) string {
-	return c.seriesStreamURL(streamID, ext)
+	return c.seriesStreamURL(streamID, sanitizeExt(ext))
 }
 
 func (c *Client) GetStreamURL(streamID int, ext string) string {
-	return c.streamURL(streamID, ext)
+	return c.streamURL(streamID, sanitizeExt(ext))
+}
+
+func sanitizeExt(ext string) string {
+	var out []byte
+	for _, c := range []byte(ext) {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return "ts"
+	}
+	return string(out)
 }
 
 func (c *Client) streamURL(streamID int, ext string) string {

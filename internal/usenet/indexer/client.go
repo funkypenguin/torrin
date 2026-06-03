@@ -1,9 +1,11 @@
 package indexer
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,6 +17,7 @@ type Client struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
+	allowLocal bool
 }
 
 type Result struct {
@@ -42,6 +45,9 @@ func NewClientWithProxy(baseURL, apiKey, proxyURL string) *Client {
 			transport.Proxy = http.ProxyURL(p)
 		}
 	}
+	// Block connections to private/internal IPs (SSRF prevention).
+	// Skipped when allowLocal is set (tests only).
+	transport.DialContext = ssrfSafeDialer(false)
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
@@ -50,6 +56,73 @@ func NewClientWithProxy(baseURL, apiKey, proxyURL string) *Client {
 			Transport: transport,
 		},
 	}
+}
+
+// ValidateURL checks that a URL is safe to fetch (https only, no private IPs).
+func ValidateURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("only http/https allowed")
+	}
+	host := u.Hostname()
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		return fmt.Errorf("DNS lookup failed: %w", err)
+	}
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if isPrivateIP(ip) {
+			return fmt.Errorf("private/internal addresses not allowed")
+		}
+	}
+	return nil
+}
+
+// NewTestClient creates a client that allows localhost connections (for tests only).
+func NewTestClient(baseURL, apiKey string) *Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	return &Client{
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		apiKey:     apiKey,
+		allowLocal: true,
+		httpClient: &http.Client{Timeout: 15 * time.Second, Transport: transport},
+	}
+}
+
+func ssrfSafeDialer(allowLocal bool) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if allowLocal {
+			return dialer.DialContext(ctx, network, addr)
+		}
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := net.DefaultResolver.LookupHost(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		for _, ipStr := range ips {
+			ip := net.ParseIP(ipStr)
+			if ip != nil && isPrivateIP(ip) {
+				return nil, fmt.Errorf("connection to private address %s blocked", ipStr)
+			}
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
+	}
+}
+
+func isPrivateIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() ||
+		ip.Equal(net.IPv4(169, 254, 169, 254)) // cloud metadata
 }
 
 func (c *Client) SearchMovie(imdbID string) ([]Result, error) {

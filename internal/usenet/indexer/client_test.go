@@ -69,7 +69,7 @@ func TestSearchMovie(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "testkey")
+	client := NewTestClient(srv.URL, "testkey")
 	results, err := client.SearchMovie("tt0133093")
 	if err != nil {
 		t.Fatalf("SearchMovie failed: %v", err)
@@ -114,7 +114,7 @@ func TestSearchMovie_StripsTTPrefix(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "key")
+	client := NewTestClient(srv.URL, "key")
 	client.SearchMovie("tt1234567")
 	if receivedIMDB != "1234567" {
 		t.Fatalf("expected tt prefix stripped, got %s", receivedIMDB)
@@ -139,7 +139,7 @@ func TestSearchTV(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "key")
+	client := NewTestClient(srv.URL, "key")
 	results, err := client.SearchTV("tt0944947", 1, 3)
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +161,7 @@ func TestSearchQuery(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "key")
+	client := NewTestClient(srv.URL, "key")
 	results, err := client.SearchQuery("The Matrix 1999", "")
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +177,7 @@ func TestSearch_APIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "badkey")
+	client := NewTestClient(srv.URL, "badkey")
 	_, err := client.SearchMovie("0133093")
 	if err == nil {
 		t.Fatal("expected error for bad API key")
@@ -194,7 +194,7 @@ func TestSearch_HTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "key")
+	client := NewTestClient(srv.URL, "key")
 	_, err := client.SearchMovie("0133093")
 	if err == nil {
 		t.Fatal("expected error for HTTP 500")
@@ -214,7 +214,7 @@ func TestDownloadNZB(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "key")
+	client := NewTestClient(srv.URL, "key")
 	data, err := client.DownloadNZB(&Result{ID: "abc123"})
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func TestDownloadNZB_UsesNZBURL(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient("http://other.host", "key")
+	client := NewTestClient("http://other.host", "key")
 	data, err := client.DownloadNZB(&Result{ID: "x", NZBURL: srv.URL + "/custom"})
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +246,7 @@ func TestSearch_EmptyResults(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewClient(srv.URL, "key")
+	client := NewTestClient(srv.URL, "key")
 	results, err := client.SearchMovie("9999999")
 	if err != nil {
 		t.Fatal(err)

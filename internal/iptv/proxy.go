@@ -23,9 +23,10 @@ func NewProxy(proxyURL string) *Proxy {
 			transport.Proxy = http.ProxyURL(proxyParsed)
 		}
 	}
+	transport.ResponseHeaderTimeout = 30 * time.Second
 	return &Proxy{
 		httpClient: &http.Client{
-			Timeout:   0,
+			Timeout:   4 * time.Hour,
 			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return nil

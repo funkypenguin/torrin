@@ -233,7 +233,7 @@ func (a *Assembler) downloadFile(ctx context.Context, file nzb.File, outputDir s
 		}
 	}
 
-	slog.Info("assembled file", "name", filename, "size_mb", totalSize/(1024*1024), "segments", len(segments))
+	slog.Info("assembled file", "name", filename, "size_mb", totalSize/1e6, "segments", len(segments))
 
 	return &FileResult{
 		Name: filename,

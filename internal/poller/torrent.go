@@ -36,8 +36,8 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 		job.Name = t.Name
 
 		if job.MaxBytes > 0 && t.Size > job.MaxBytes {
-			maxGB := job.MaxBytes / (1024 * 1024 * 1024)
-			actualGB := t.Size / (1024 * 1024 * 1024)
+			maxGB := job.MaxBytes / 1e9
+			actualGB := t.Size / 1e9
 			slog.Warn("torrent exceeds plan size limit",
 				"job", job.ID, "name", t.Name,
 				"size_gb", actualGB, "max_gb", maxGB)
@@ -61,8 +61,8 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 		p.store.Update(job)
 		slog.Info("metadata received, size ok, resuming",
 			"job", job.ID, "name", t.Name,
-			"size_gb", t.Size/(1024*1024*1024),
-			"max_gb", job.MaxBytes/(1024*1024*1024))
+			"size_gb", t.Size/1e9,
+			"max_gb", job.MaxBytes/1e9)
 	} else if t.Name != "" && job.Name == "" {
 		job.Name = t.Name
 		p.store.Update(job)
@@ -150,7 +150,18 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 		}
 		slog.Info("torrent complete, uploading to R2", "job", job.ID, "name", t.Name)
 		go func(j *jobs.Job, tor *qbit.Torrent) {
+			p.uploadSem <- struct{}{}
+			defer func() { <-p.uploadSem }()
 			defer p.uploading.Delete(j.InfoHash)
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic in upload goroutine", "err", r, "job", j.ID)
+					j.Status = jobs.StatusFailed
+					j.Error = "internal error during upload"
+					p.store.Update(j)
+					p.ReleaseFor(j.InfoHash)
+				}
+			}()
 			p.uploadAndFinalize(ctx, j, tor)
 		}(job, t)
 	}
@@ -162,7 +173,7 @@ func (p *Poller) tryAddQueued(job *jobs.Job) {
 		estimatedSize += f.Size
 	}
 	if estimatedSize == 0 {
-		estimatedSize = 5 * 1024 * 1024 * 1024
+		estimatedSize = 5_000_000_000
 	}
 
 	if !p.ReserveFor(job.InfoHash, estimatedSize) {
@@ -181,7 +192,7 @@ func (p *Poller) tryAddQueued(job *jobs.Job) {
 
 	job.Status = jobs.StatusPending
 	p.store.Update(job)
-	slog.Info("queued job added to qbittorrent", "job", job.ID, "size_gb", estimatedSize/(1024*1024*1024))
+	slog.Info("queued job added to qbittorrent", "job", job.ID, "size_gb", estimatedSize/1e9)
 }
 
 func (p *Poller) deleteAndVerify(hash string, t *qbit.Torrent) {

@@ -34,10 +34,18 @@ func Process(dir string, jobName ...string) ([]OutputFile, error) {
 
 	// Step 3: RAR extraction if rar files exist.
 	if rarFile := findFirstRar(dir); rarFile != "" {
+		inputSize := dirSize(dir)
+
 		slog.Info("extracting rar", "file", rarFile)
 		if err := runUnrar(rarFile, dir); err != nil {
 			return nil, fmt.Errorf("unrar: %w", err)
 		}
+
+		outputSize := dirSize(dir)
+		if inputSize > 0 && outputSize > inputSize*20 {
+			return nil, fmt.Errorf("decompression bomb detected: %dMB -> %dMB", inputSize/1e6, outputSize/1e6)
+		}
+
 		// Clean up archive files after successful extraction.
 		cleanArchives(dir)
 	}
@@ -304,6 +312,17 @@ func renameObfuscatedRarsByMagic(dir string) {
 			slog.Warn("rename obfuscated rar failed", "from", r.name, "to", newName, "err", err)
 		}
 	}
+}
+
+func dirSize(dir string) int64 {
+	var total int64
+	filepath.Walk(dir, func(_ string, info os.FileInfo, _ error) error {
+		if info != nil && !info.IsDir() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 func extractTrailingNumber(name string) int {

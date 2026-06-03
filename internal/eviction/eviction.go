@@ -21,7 +21,7 @@ var DefaultPolicy = Policy{
 	NeverAccessedTTL: 3,
 	StandardTTL:      14,
 	PopularTTL:       45,
-	StorageCapBytes:  300 * 1024 * 1024 * 1024,
+	StorageCapBytes:  300_000_000_000,
 }
 
 // Engine handles cache eviction.
@@ -51,12 +51,12 @@ func (e *Engine) RunDaily(ctx context.Context) {
 		reason := ""
 
 		// Large files (>50GB) get popular-tier retention regardless of views.
-		isLarge := c.FileSize > 50*1024*1024*1024
+		isLarge := c.FileSize > 50_000_000_000
 
 		if isLarge {
 			if c.DaysSinceAccess >= e.policy.PopularTTL {
 				shouldEvict = true
-				reason = fmt.Sprintf("large file (%dGB), %d days inactive", c.FileSize/(1024*1024*1024), c.DaysSinceAccess)
+				reason = fmt.Sprintf("large file (%dGB), %d days inactive", c.FileSize/1e9, c.DaysSinceAccess)
 			}
 		} else if c.AccessCount == 0 && c.DaysSinceAccess >= e.policy.NeverAccessedTTL {
 			shouldEvict = true
@@ -82,13 +82,13 @@ func (e *Engine) RunDaily(ctx context.Context) {
 			}
 			evicted++
 			freedBytes += c.FileSize
-			slog.Info("evicted", "name", c.Name, "reason", reason, "size_mb", c.FileSize/(1024*1024))
+			slog.Info("evicted", "name", c.Name, "reason", reason, "size_mb", c.FileSize/1e6)
 		}
 	}
 
 	totalSize, _ := e.store.GetTotalCachedSize()
 	if totalSize > e.policy.StorageCapBytes {
-		slog.Warn("eviction: over storage cap", "total_gb", totalSize/(1024*1024*1024), "cap_gb", e.policy.StorageCapBytes/(1024*1024*1024))
+		slog.Warn("eviction: over storage cap", "total_gb", totalSize/1e9, "cap_gb", e.policy.StorageCapBytes/1e9)
 
 		candidates, _ = e.store.GetEvictionCandidates()
 		for _, c := range candidates {
@@ -107,11 +107,11 @@ func (e *Engine) RunDaily(ctx context.Context) {
 			totalSize -= c.FileSize
 			evicted++
 			freedBytes += c.FileSize
-			slog.Info("budget evicted", "name", c.Name, "size_mb", c.FileSize/(1024*1024))
+			slog.Info("budget evicted", "name", c.Name, "size_mb", c.FileSize/1e6)
 		}
 	}
 
-	slog.Info("eviction: complete", "evicted", evicted, "freed_gb", freedBytes/(1024*1024*1024))
+	slog.Info("eviction: complete", "evicted", evicted, "freed_gb", freedBytes/1e9)
 }
 
 func (e *Engine) deleteFromR2(ctx context.Context, infoHash string) error {

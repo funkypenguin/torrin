@@ -51,7 +51,10 @@ func Decode(data []byte) (*YencResult, error) {
 	}
 
 	var buf bytes.Buffer
-	buf.Grow(int(result.Size))
+	const maxGrow = 2 * 1024 * 1024
+	if result.Size > 0 && result.Size <= maxGrow {
+		buf.Grow(int(result.Size))
+	}
 
 	for _, line := range lines[dataStart:dataEnd] {
 		decodeLine(line, &buf)

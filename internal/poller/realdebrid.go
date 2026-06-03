@@ -32,14 +32,14 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 	rdClient := p.rd
 	if p.rdKeyProvider != nil {
 		if userKey, err := p.rdKeyProvider.GetRDKey(ctx, job.UserID); err == nil {
-			rdClient = realdebrid.NewClient(userKey)
+			rdClient = p.GetRDClient(userKey)
 			log = log.With("rd_source", "user")
 		}
 	}
 	// Check to see if any synced user already has this hash cached on RD.
 	if rdClient == p.rd && p.rdHashLookup != nil {
 		if lookupKey, err := p.rdHashLookup.FindRDKeyForHash(ctx, job.InfoHash); err == nil && lookupKey != "" {
-			rdClient = realdebrid.NewClient(lookupKey)
+			rdClient = p.GetRDClient(lookupKey)
 			log = log.With("rd_source", "hash_lookup")
 		}
 	}
@@ -71,8 +71,8 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 
 	// Size check against plan limit.
 	if job.MaxBytes > 0 && totalVideoSize > job.MaxBytes {
-		maxGB := job.MaxBytes / (1024 * 1024 * 1024)
-		actualGB := totalVideoSize / (1024 * 1024 * 1024)
+		maxGB := job.MaxBytes / 1e9
+		actualGB := totalVideoSize / 1e9
 		log.Warn("rd torrent exceeds plan size limit", "size_gb", actualGB, "max_gb", maxGB)
 		job.Status = jobs.StatusFailed
 		job.Error = fmt.Sprintf("torrent size %dGB exceeds your plan limit of %dGB", actualGB, maxGB)
@@ -163,7 +163,17 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 	p.store.Update(job)
 
 	go func(j *jobs.Job, t *realdebrid.Torrent, torrentID string, rc *realdebrid.Client) {
+		p.uploadSem <- struct{}{}
+		defer func() { <-p.uploadSem }()
 		defer p.uploading.Delete(j.InfoHash)
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in RD download goroutine", "err", r, "job", j.ID)
+				j.Status = jobs.StatusFailed
+				j.Error = "internal error during download"
+				p.store.Update(j)
+			}
+		}()
 		p.downloadFromRD(ctx, j, t, torrentID, rc)
 	}(job, torrent, rdID, rdClient)
 
@@ -222,14 +232,14 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 			continue
 		}
 
-		log.Info("unrestricted", "filename", unrestricted.Filename, "size_mb", unrestricted.FileSize/(1024*1024), "url", unrestricted.Download[:min(80, len(unrestricted.Download))])
+		log.Info("unrestricted", "filename", unrestricted.Filename, "size_mb", unrestricted.FileSize/1e6, "url", unrestricted.Download[:min(80, len(unrestricted.Download))])
 
 		if !isVideoFile(unrestricted.Filename) {
 			log.Info("skipping non-video", "filename", unrestricted.Filename)
 			continue
 		}
 
-		log.Info("downloading from rd", "file", unrestricted.Filename, "size_mb", unrestricted.FileSize/(1024*1024))
+		log.Info("downloading from rd", "file", unrestricted.Filename, "size_mb", unrestricted.FileSize/1e6)
 
 		localPath := filepath.Join(tmpDir, filepath.Base(unrestricted.Filename))
 		if err := p.downloadRDFileWithProgress(ctx, rdClient, unrestricted.Download, localPath, job, unrestricted.FileSize, i, len(torrent.Links)); err != nil {
@@ -272,7 +282,7 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 		safeBaseName := strings.ReplaceAll(f.Name, " ", "_")
 		r2Key := fmt.Sprintf("%s/file_%d/%s", job.InfoHash, i, safeBaseName)
 
-		log.Info("uploading to R2", "file", f.Name, "size_mb", f.Size/(1024*1024))
+		log.Info("uploading to R2", "file", f.Name, "size_mb", f.Size/1e6)
 
 		file, err := os.Open(f.Path)
 		if err != nil {
@@ -298,7 +308,7 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 		// Delete local file immediately after upload to save disk.
 		os.Remove(f.Path)
 
-		log.Info("uploaded", "key", r2Key, "size_mb", f.Size/(1024*1024))
+		log.Info("uploaded", "key", r2Key, "size_mb", f.Size/1e6)
 
 		streamURLs = append(streamURLs, jobs.Stream{
 			FileName:  f.Name,

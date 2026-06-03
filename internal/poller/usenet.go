@@ -48,7 +48,7 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 
 	// Queued: try again when budget available.
 	if dl == nil && job.Status == jobs.StatusQueued {
-		if p.BudgetAvailable() > 1*1024*1024*1024 {
+		if p.BudgetAvailable() > 1_000_000_000 {
 			job.Status = jobs.StatusPending
 			p.store.Update(job)
 		}
@@ -106,7 +106,17 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 		}
 		slog.Info("usenet download complete, uploading to R2", "job", job.ID, "name", job.Name)
 		go func(j *jobs.Job, files []usenet.OutputFile) {
+			p.uploadSem <- struct{}{}
+			defer func() { <-p.uploadSem }()
 			defer p.uploading.Delete(j.InfoHash)
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic in usenet upload goroutine", "err", r, "job", j.ID)
+					j.Status = jobs.StatusFailed
+					j.Error = "internal error during upload"
+					p.store.Update(j)
+				}
+			}()
 			p.uploadLocalFiles(ctx, j, files)
 			p.usenet.CleanupFiles(j.InfoHash)
 			p.ReleaseFor(j.InfoHash)
