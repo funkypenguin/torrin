@@ -93,11 +93,11 @@ func (s *Store) Create(job *Job) error {
 	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO jobs (id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, max_bytes, priority, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO jobs (id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.ID, job.UserID, job.InfoHash, job.Name, job.Magnet, source, job.Status, job.Error,
 		string(files), string(selected), string(streams), job.NZBData, job.IMDBID,
-		job.MaxBytes, job.Priority, job.CreatedAt, job.UpdatedAt,
+		job.FileSize, job.MaxBytes, job.Priority, job.CreatedAt, job.UpdatedAt,
 	)
 	return err
 }
@@ -278,7 +278,7 @@ func (s *Store) GetEvictionCandidates() ([]EvictionCandidate, error) {
 
 func (s *Store) GetTotalCachedSize() (int64, error) {
 	var total int64
-	err := s.db.QueryRow(`SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE status IN ('complete', 'cached')`).Scan(&total)
+	err := s.db.QueryRow(`SELECT COALESCE(SUM(max_size), 0) FROM (SELECT MAX(file_size) as max_size FROM jobs WHERE status IN ('complete', 'cached') GROUP BY info_hash)`).Scan(&total)
 	return total, err
 }
 
@@ -372,7 +372,7 @@ func (s *Store) RecordDailySnapshot(totalUsers int) error {
 		INSERT OR REPLACE INTO metrics_snapshots (date, cached_count, cached_size, total_views, total_users)
 		VALUES (?,
 			(SELECT COUNT(*) FROM jobs WHERE status IN ('complete','cached')),
-			(SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE status IN ('complete','cached')),
+			(SELECT COALESCE(SUM(max_size), 0) FROM (SELECT MAX(file_size) as max_size FROM jobs WHERE status IN ('complete','cached') GROUP BY info_hash)),
 			(SELECT COALESCE(SUM(access_count), 0) FROM jobs),
 			?
 		)`, today, totalUsers)

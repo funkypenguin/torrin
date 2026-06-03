@@ -74,7 +74,12 @@ func (e *Engine) RunDaily(ctx context.Context) {
 				slog.Warn("eviction: delete failed", "hash", c.InfoHash, "err", err)
 				continue
 			}
-			e.store.Delete(c.ID)
+			siblings, _ := e.store.ListByInfoHash(c.InfoHash)
+			for _, sib := range siblings {
+				sib.Status = jobs.StatusFailed
+				sib.Error = "content evicted from cache"
+				e.store.Update(sib)
+			}
 			evicted++
 			freedBytes += c.FileSize
 			slog.Info("evicted", "name", c.Name, "reason", reason, "size_mb", c.FileSize/(1024*1024))
@@ -93,7 +98,12 @@ func (e *Engine) RunDaily(ctx context.Context) {
 			if err := e.deleteFromR2(ctx, c.InfoHash); err != nil {
 				continue
 			}
-			e.store.Delete(c.ID)
+			siblings, _ := e.store.ListByInfoHash(c.InfoHash)
+			for _, sib := range siblings {
+				sib.Status = jobs.StatusFailed
+				sib.Error = "content evicted from cache"
+				e.store.Update(sib)
+			}
 			totalSize -= c.FileSize
 			evicted++
 			freedBytes += c.FileSize
