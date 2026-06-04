@@ -56,6 +56,9 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 			}
 		}
 
+		p.ReleaseFor(job.InfoHash)
+		p.ReserveFor(job.InfoHash, t.Size)
+
 		p.qb.Resume(job.InfoHash)
 		job.Status = jobs.StatusProcessing
 		p.store.Update(job)
@@ -149,7 +152,9 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 			return
 		}
 		slog.Info("torrent complete, uploading to R2", "job", job.ID, "name", t.Name)
+		p.UploadWg.Add(1)
 		go func(j *jobs.Job, tor *qbit.Torrent) {
+			defer p.UploadWg.Done()
 			p.uploadSem <- struct{}{}
 			defer func() { <-p.uploadSem }()
 			defer p.uploading.Delete(j.InfoHash)

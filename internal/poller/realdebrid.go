@@ -162,7 +162,9 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 	}
 	p.store.Update(job)
 
+	p.UploadWg.Add(1)
 	go func(j *jobs.Job, t *realdebrid.Torrent, torrentID string, rc *realdebrid.Client) {
+		defer p.UploadWg.Done()
 		p.uploadSem <- struct{}{}
 		defer func() { <-p.uploadSem }()
 		defer p.uploading.Delete(j.InfoHash)

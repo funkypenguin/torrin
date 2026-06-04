@@ -31,6 +31,7 @@ type Poller struct {
 	rdSkip         sync.Map
 	rdClients      sync.Map
 	uploadSem      chan struct{}
+	UploadWg       sync.WaitGroup
 }
 
 func (p *Poller) SetUsenetManager(m *usenet.Manager) {
@@ -111,9 +112,49 @@ func (p *Poller) ReleaseFor(infoHash string) {
 	}
 }
 
+func (p *Poller) recalcBudget() {
+	active, _ := p.store.ListByStatus(jobs.StatusProcessing)
+	pending, _ := p.store.ListByStatus(jobs.StatusPending)
+	queued, _ := p.store.ListByStatus(jobs.StatusQueued)
+	all := append(append(active, pending...), queued...)
+
+	qbSizes := map[string]int64{}
+	if p.qb.Login() == nil {
+		if torrents, err := p.qb.ListTorrents(); err == nil {
+			for _, t := range torrents {
+				if t.Size > 0 {
+					qbSizes[t.Hash] = t.Size
+				}
+			}
+		}
+	}
+
+	var total int64
+	for _, j := range all {
+		size := qbSizes[j.InfoHash]
+		if size == 0 {
+			size = j.FileSize
+		}
+		if size == 0 {
+			for _, f := range j.Files {
+				size += f.Size
+			}
+		}
+		if size == 0 {
+			size = 5_000_000_000
+		}
+		p.ReserveFor(j.InfoHash, size)
+		total += size
+	}
+	if total > 0 {
+		slog.Info("budget recalculated from active jobs", "jobs", len(all), "reserved_gb", total/1e9)
+	}
+}
+
 func (p *Poller) Run(ctx context.Context) {
 	slog.Info("poller started", "interval", p.interval, "budget_gb", p.budgetMax/1e9)
 
+	p.recalcBudget()
 	p.cleanupOrphans()
 
 	ticker := time.NewTicker(p.interval)

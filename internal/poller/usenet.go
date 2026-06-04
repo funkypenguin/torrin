@@ -105,7 +105,9 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 			return
 		}
 		slog.Info("usenet download complete, uploading to R2", "job", job.ID, "name", job.Name)
+		p.UploadWg.Add(1)
 		go func(j *jobs.Job, files []usenet.OutputFile) {
+			defer p.UploadWg.Done()
 			p.uploadSem <- struct{}{}
 			defer func() { <-p.uploadSem }()
 			defer p.uploading.Delete(j.InfoHash)
