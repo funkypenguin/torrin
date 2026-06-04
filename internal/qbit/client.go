@@ -83,6 +83,9 @@ func (c *Client) AddMagnet(magnet string) error {
 		return fmt.Errorf("add magnet: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 409 {
+		return nil
+	}
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("add magnet (%d): %s", resp.StatusCode, body)
