@@ -16,7 +16,7 @@ import (
 )
 
 func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.Torrent) {
-	files, err := p.qb.GetFiles(job.InfoHash)
+	files, err := p.qb.GetFiles(t.Hash)
 	if err != nil {
 		slog.Error("get files for upload", "err", err)
 		return
@@ -76,7 +76,7 @@ func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.T
 		job.Status = jobs.StatusFailed
 		job.Error = "no video files found"
 		p.store.Update(job)
-		p.deleteAndVerify(job.InfoHash, t)
+		p.deleteAndVerify(t.Hash, t)
 		p.ReleaseFor(job.InfoHash)
 		return
 	}
@@ -115,7 +115,7 @@ func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.T
 		p.store.SetFileSize(sib.ID, uploadedSize)
 	}
 
-	p.deleteAndVerify(job.InfoHash, t)
+	p.deleteAndVerify(t.Hash, t)
 	p.ReleaseFor(job.InfoHash)
 
 	slog.Info("job complete", "job", job.ID, "name", job.Name, "streams", len(streamURLs), "users", len(siblings))

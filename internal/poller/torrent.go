@@ -6,15 +6,36 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/torrin-app/torrin/internal/jobs"
 	"github.com/torrin-app/torrin/internal/qbit"
 )
 
-// pollTorrentJob handles a single torrent job during the poll cycle.
+func extractV2Hash(magnet string) string {
+	for _, part := range strings.Split(magnet, "&") {
+		if strings.HasPrefix(part, "xt=urn:btmh:") {
+			mh := strings.ToLower(strings.TrimPrefix(part, "xt=urn:btmh:"))
+			if strings.HasPrefix(mh, "1220") && len(mh) >= 44 {
+				return mh[4:44]
+			}
+		}
+	}
+	return ""
+}
+
 func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
-	t, err := p.qb.GetTorrent(job.InfoHash)
+	qBitHash := job.InfoHash
+	t, err := p.qb.GetTorrent(qBitHash)
+	if err != nil && job.Magnet != "" {
+		if v2 := extractV2Hash(job.Magnet); v2 != "" && v2 != job.InfoHash {
+			t, err = p.qb.GetTorrent(v2)
+			if err == nil {
+				qBitHash = v2
+			}
+		}
+	}
 	if err != nil {
 		if (job.Status == jobs.StatusQueued || job.Status == jobs.StatusPending) && job.Magnet != "" {
 			p.tryAddQueued(job)
@@ -44,11 +65,11 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 			job.Status = jobs.StatusFailed
 			job.Error = fmt.Sprintf("torrent size %dGB exceeds your plan limit of %dGB", actualGB, maxGB)
 			p.store.Update(job)
-			p.deleteAndVerify(job.InfoHash, t)
+			p.deleteAndVerify(qBitHash, t)
 			return
 		}
 
-		files, err := p.qb.GetFiles(job.InfoHash)
+		files, err := p.qb.GetFiles(qBitHash)
 		if err == nil && len(files) > 0 {
 			job.Files = make([]jobs.File, len(files))
 			for i, f := range files {
@@ -59,7 +80,7 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 		p.ReleaseFor(job.InfoHash)
 		p.ReserveFor(job.InfoHash, t.Size)
 
-		p.qb.Resume(job.InfoHash)
+		p.qb.Resume(qBitHash)
 		job.Status = jobs.StatusProcessing
 		p.store.Update(job)
 		slog.Info("metadata received, size ok, resuming",
@@ -86,7 +107,7 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 		job.Status = jobs.StatusFailed
 		job.Error = fmt.Sprintf("torrent error: %s", t.State)
 		p.store.Update(job)
-		p.deleteAndVerify(job.InfoHash, t)
+		p.deleteAndVerify(qBitHash, t)
 		p.ReleaseFor(job.InfoHash)
 		return
 	}
@@ -105,15 +126,15 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 			job.Status = jobs.StatusFailed
 			job.Error = "torrent stalled — no peers available"
 			p.store.Update(job)
-			p.deleteAndVerify(job.InfoHash, t)
+			p.deleteAndVerify(qBitHash, t)
 			p.ReleaseFor(job.InfoHash)
 			return
 		} else if stalledFor > 2*time.Hour && job.Error != "restarting stalled torrent" {
 			// 2h stalled — force stop+start (once).
 			slog.Info("force restarting stalled torrent", "job", job.ID, "name", t.Name)
-			p.qb.Pause(job.InfoHash)
+			p.qb.Pause(qBitHash)
 			time.Sleep(2 * time.Second)
-			p.qb.Resume(job.InfoHash)
+			p.qb.Resume(qBitHash)
 			job.Error = "restarting stalled torrent"
 			p.store.Update(job)
 		} else if stalledFor > 1*time.Hour {
@@ -123,13 +144,13 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 				job.Error = "stalled — waiting for peers"
 				p.store.Update(job)
 			}
-			p.qb.Reannounce(job.InfoHash)
+			p.qb.Reannounce(qBitHash)
 		} else if stalledFor > 15*time.Minute {
 			// 15m — second reannounce.
-			p.qb.Reannounce(job.InfoHash)
+			p.qb.Reannounce(qBitHash)
 		} else if stalledFor > 5*time.Minute {
 			// 5m — first reannounce attempt.
-			p.qb.Reannounce(job.InfoHash)
+			p.qb.Reannounce(qBitHash)
 		}
 	}
 
@@ -139,11 +160,11 @@ func (p *Poller) pollTorrentJob(ctx context.Context, job *jobs.Job) {
 			job.Status = jobs.StatusFailed
 			job.Error = "could not find torrent metadata — invalid or dead magnet"
 			p.store.Update(job)
-			p.deleteAndVerify(job.InfoHash, t)
+			p.deleteAndVerify(qBitHash, t)
 			p.ReleaseFor(job.InfoHash)
 			return
 		} else if stalledFor > 5*time.Minute {
-			p.qb.Reannounce(job.InfoHash)
+			p.qb.Reannounce(qBitHash)
 		}
 	}
 

@@ -154,8 +154,8 @@ func (p *Poller) recalcBudget() {
 func (p *Poller) Run(ctx context.Context) {
 	slog.Info("poller started", "interval", p.interval, "budget_gb", p.budgetMax/1e9)
 
-	p.recalcBudget()
 	p.cleanupOrphans()
+	p.recalcBudget()
 
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
@@ -189,6 +189,19 @@ func (p *Poller) cleanupOrphans() {
 	cleaned := 0
 	for _, t := range torrents {
 		job, err := p.store.GetByInfoHash(t.Hash)
+		// For hybrid v2 torrents, qBit uses a different hash than our DB.
+		// Check if any active job's magnet contains this hash as a btmh v2 hash.
+		if (err != nil || job == nil) && t.Hash != "" {
+			active, _ := p.store.ListByStatus(jobs.StatusProcessing)
+			pending, _ := p.store.ListByStatus(jobs.StatusPending)
+			for _, j := range append(active, pending...) {
+				if v2 := extractV2Hash(j.Magnet); v2 == t.Hash {
+					job = j
+					err = nil
+					break
+				}
+			}
+		}
 		if err != nil || job == nil {
 			slog.Info("cleanup orphan", "hash", t.Hash, "name", t.Name)
 			p.qb.Delete(t.Hash)
