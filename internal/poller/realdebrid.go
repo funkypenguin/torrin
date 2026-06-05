@@ -160,6 +160,10 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 	if torrent.Filename != "" && job.Name == "" {
 		job.Name = torrent.Filename
 	}
+	if totalVideoSize > 0 {
+		job.FileSize = totalVideoSize
+		p.store.SetFileSize(job.ID, totalVideoSize)
+	}
 	p.store.Update(job)
 
 	p.UploadWg.Add(1)

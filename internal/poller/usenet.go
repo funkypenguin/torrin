@@ -26,7 +26,7 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 			return
 		}
 
-		if !p.ReserveFor(job.InfoHash, job.FileSize) {
+		if p.BudgetAvailable() < job.FileSize {
 			job.Status = jobs.StatusQueued
 			p.store.Update(job)
 			return
@@ -34,7 +34,7 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 
 		_, err := p.usenet.Submit(ctx, job.UserID, job.NZBData, job.Name)
 		if err != nil {
-			p.ReleaseFor(job.InfoHash)
+
 			job.Status = jobs.StatusFailed
 			job.Error = fmt.Sprintf("usenet: %v", err)
 			p.store.Update(job)
@@ -98,7 +98,6 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 		job.Error = snap.Error
 		p.store.Update(job)
 		p.usenet.CleanupFiles(job.InfoHash)
-		p.ReleaseFor(job.InfoHash)
 
 	case usenet.StatusComplete:
 		if _, already := p.uploading.LoadOrStore(job.InfoHash, true); already {
@@ -121,7 +120,6 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 			}()
 			p.uploadLocalFiles(ctx, j, files)
 			p.usenet.CleanupFiles(j.InfoHash)
-			p.ReleaseFor(j.InfoHash)
 		}(job, snap.Files)
 	}
 }
