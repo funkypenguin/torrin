@@ -44,6 +44,8 @@ github.com/dustin/go-couch v0.0.0-20160816170231-8251128dab73/go.mod h1:WG/TWzFd
 github.com/dustin/go-nntp v0.0.0-20210723005859-f00d51cf8cc1 h1:R90ND7acg9HKYj3oJBKKefk73DULdC7IlcnS7MV0X1s=
 github.com/dustin/go-nntp v0.0.0-20210723005859-f00d51cf8cc1/go.mod h1:elGbp3dKCIIdwu6jm3y6L93EVn+I6MSzYrcZXhpNS3Y=
 github.com/dustin/httputil v0.0.0-20170305193905-c47743f54f89/go.mod h1:ZoDWdnxro8Kesk3zrCNOHNFWtajFPSnDMjVEjGjQu/0=
+github.com/etix/goscrape v0.0.0-20180731120256-0265a7239aef h1:9JK9zOFcMiv7ZGTjwLMqP+HtPIBxKQAc6d7FkZl+DzA=
+github.com/etix/goscrape v0.0.0-20180731120256-0265a7239aef/go.mod h1:kAgResQP1iYTrEi40ehz9KQMDv/14kzYQu1WXzEbf/8=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=

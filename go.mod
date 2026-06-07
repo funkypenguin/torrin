@@ -25,6 +25,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.23 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/dustin/go-nntp v0.0.0-20210723005859-f00d51cf8cc1 // indirect
+	github.com/etix/goscrape v0.0.0-20180731120256-0265a7239aef // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )
