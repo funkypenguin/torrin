@@ -425,3 +425,216 @@ func (p *Poller) downloadRDFileWithProgress(ctx context.Context, rdClient *reald
 	}
 	return nil
 }
+
+func (p *Poller) pollHosterJob(ctx context.Context, job *jobs.Job) {
+	if p.ad == nil {
+		return
+	}
+	if job.Status != jobs.StatusPending {
+		return
+	}
+	if _, active := p.uploading.LoadOrStore(job.InfoHash, true); active {
+		return
+	}
+
+	log := slog.With("job", job.ID, "hash", job.InfoHash, "source", "hoster")
+
+	job.Status = jobs.StatusProcessing
+	job.Error = "unrestricting"
+	p.store.Update(job)
+
+	p.UploadWg.Add(1)
+	go func() {
+		defer p.UploadWg.Done()
+		p.uploadSem <- struct{}{}
+		defer func() { <-p.uploadSem }()
+		defer p.uploading.Delete(job.InfoHash)
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in hoster download", "err", r, "job", job.ID)
+				job.Status = jobs.StatusFailed
+				job.Error = "internal error"
+				p.store.Update(job)
+			}
+		}()
+
+		// Step 1: Unlock the hoster link.
+		unlocked, err := p.ad.Unlock(ctx, job.Magnet)
+		if err != nil {
+			log.Error("hoster unlock failed", "err", err, "url", job.Magnet)
+			job.Status = jobs.StatusFailed
+			job.Error = fmt.Sprintf("unlock failed: %v", err)
+			p.store.Update(job)
+			return
+		}
+
+		log.Info("hoster unlocked", "filename", unlocked.Filename, "size_mb", unlocked.FileSize/1_000_000)
+
+		if !isVideoFile(unlocked.Filename) {
+			log.Warn("hoster file is not a video, skipping", "filename", unlocked.Filename)
+			job.Status = jobs.StatusFailed
+			job.Error = "unsupported file type (video only)"
+			p.store.Update(job)
+			return
+		}
+
+		if job.Name == "" || job.Name == job.Magnet {
+			job.Name = unlocked.Filename
+		}
+		job.FileSize = unlocked.FileSize
+		p.store.SetFileSize(job.ID, unlocked.FileSize)
+
+		// Step 2: Size check against plan limit.
+		if job.MaxBytes > 0 && unlocked.FileSize > job.MaxBytes {
+			log.Warn("hoster file exceeds plan limit", "size", unlocked.FileSize, "max", job.MaxBytes)
+			job.Status = jobs.StatusFailed
+			job.Error = fmt.Sprintf("file too large (%d MB, max %d MB)", unlocked.FileSize/1_000_000, job.MaxBytes/1_000_000)
+			p.store.Update(job)
+			return
+		}
+
+		// Step 3: Download.
+		tmpDir := filepath.Join(p.rdDownloadDir, job.InfoHash)
+		os.MkdirAll(tmpDir, 0755)
+		defer os.RemoveAll(tmpDir)
+
+		localPath := filepath.Join(tmpDir, filepath.Base(unlocked.Filename))
+
+		log.Info("downloading hoster file", "file", unlocked.Filename, "size_mb", unlocked.FileSize/1_000_000)
+
+		if err := p.downloadHosterFile(ctx, unlocked.Link, localPath, job, unlocked.FileSize); err != nil {
+			log.Error("hoster download failed", "err", err)
+			job.Status = jobs.StatusFailed
+			job.Error = "download failed"
+			p.store.Update(job)
+			return
+		}
+
+		info, _ := os.Stat(localPath)
+		var fileSize int64
+		if info != nil {
+			fileSize = info.Size()
+		}
+
+		// Step 4: Upload to R2.
+		job.Error = "uploading to cache"
+		p.store.Update(job)
+
+		safeBaseName := strings.ReplaceAll(unlocked.Filename, " ", "_")
+		r2Key := fmt.Sprintf("%s/file_0/%s", job.InfoHash, safeBaseName)
+
+		log.Info("uploading to R2", "key", r2Key, "size_mb", fileSize/1_000_000)
+
+		file, err := os.Open(localPath)
+		if err != nil {
+			job.Status = jobs.StatusFailed
+			job.Error = "disk error"
+			p.store.Update(job)
+			return
+		}
+
+		ct := contentTypeFor(filepath.Ext(unlocked.Filename))
+		if err := p.r2.StreamUpload(ctx, r2Key, file, ct); err != nil {
+			file.Close()
+			log.Error("r2 upload failed", "err", err)
+			job.Status = jobs.StatusFailed
+			job.Error = "upload failed"
+			p.store.Update(job)
+			return
+		}
+		file.Close()
+		os.Remove(localPath)
+
+		log.Info("uploaded", "key", r2Key, "size_mb", fileSize/1_000_000)
+
+		// Step 5: Create manifest and finalize.
+		streamURLs := []jobs.Stream{{
+			FileName:  unlocked.Filename,
+			Size:      fileSize,
+			DirectURL: r2Key,
+			SignedURL: p.r2.SignURL(r2Key, 24*time.Hour),
+		}}
+
+		manifest := map[string]any{
+			"info_hash": job.InfoHash, "name": job.Name,
+			"files": []map[string]any{{
+				"file_name":  unlocked.Filename,
+				"direct_url": r2Key,
+				"file_size":  fileSize,
+			}},
+			"created_at": time.Now(),
+		}
+		manifestJSON, _ := json.MarshalIndent(manifest, "", "  ")
+		p.r2.UploadFile(ctx, job.InfoHash+"/manifest.json", strings.NewReader(string(manifestJSON)), "application/json")
+
+		siblings, _ := p.store.ListByInfoHash(job.InfoHash)
+		for _, sib := range siblings {
+			sib.StreamURLs = streamURLs
+			sib.Name = job.Name
+			sib.Status = jobs.StatusComplete
+			sib.Error = ""
+			p.store.Update(sib)
+			p.store.SetFileSize(sib.ID, fileSize)
+		}
+
+		log.Info("hoster job complete", "name", job.Name, "size_mb", fileSize/1_000_000)
+	}()
+}
+
+func (p *Poller) downloadHosterFile(ctx context.Context, downloadURL, localPath string, job *jobs.Job, totalSize int64) error {
+	body, contentLength, err := p.ad.DownloadFile(ctx, downloadURL)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+
+	if contentLength > 0 {
+		totalSize = contentLength
+	}
+
+	f, err := os.Create(localPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	buf := make([]byte, 256*1024)
+	var written int64
+	lastUpdate := time.Now()
+	lastBytes := int64(0)
+
+	for {
+		n, readErr := body.Read(buf)
+		if n > 0 {
+			if _, wErr := f.Write(buf[:n]); wErr != nil {
+				os.Remove(localPath)
+				return wErr
+			}
+			written += int64(n)
+
+			if time.Since(lastUpdate) >= 2*time.Second {
+				elapsed := time.Since(lastUpdate).Seconds()
+				speed := float64(written-lastBytes) / elapsed
+				pct := 0
+				if totalSize > 0 {
+					pct = int(float64(written) / float64(totalSize) * 100)
+				}
+				msg := fmt.Sprintf("downloading — %d%% (%d B/s)", pct, int64(speed))
+				if job.Error != msg {
+					job.Error = msg
+					p.store.Update(job)
+				}
+				lastUpdate = time.Now()
+				lastBytes = written
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			os.Remove(localPath)
+			return readErr
+		}
+	}
+	return nil
+}

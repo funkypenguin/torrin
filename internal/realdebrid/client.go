@@ -13,6 +13,17 @@ import (
 	"time"
 )
 
+func NewClientWithProxy(apiKey string, proxyURL *url.URL) *Client {
+	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	return &Client{
+		apiKey:         apiKey,
+		httpClient:     &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		downloadClient: &http.Client{Timeout: 0, Transport: transport},
+		limiter:        newRateLimiter(250, time.Minute),
+		log:            slog.Default().With("pkg", "realdebrid"),
+	}
+}
+
 const baseURL = "https://api.real-debrid.com/rest/1.0"
 
 type Client struct {
@@ -31,6 +42,10 @@ func NewClient(apiKey string) *Client {
 		limiter:        newRateLimiter(250, time.Minute),
 		log:            slog.Default().With("pkg", "realdebrid"),
 	}
+}
+
+func (c *Client) APIKey() string {
+	return c.apiKey
 }
 
 func (c *Client) AddMagnet(ctx context.Context, magnet string) (*AddMagnetResponse, error) {

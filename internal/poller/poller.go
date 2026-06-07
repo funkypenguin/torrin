@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/torrin-app/torrin/internal/alldebrid"
 	"github.com/torrin-app/torrin/internal/jobs"
 	"github.com/torrin-app/torrin/internal/qbit"
 	"github.com/torrin-app/torrin/internal/r2"
@@ -20,12 +21,14 @@ type Poller struct {
 	rdKeyProvider realdebrid.KeyProvider
 	rdHashLookup  realdebrid.HashLookup
 	rdDownloadDir string
+	ad            *alldebrid.Client
 	r2            *r2.Client
 	store         *jobs.Store
 	interval      time.Duration
 	budgetMax     int64
 	uploading     sync.Map
 	rdSkip        sync.Map
+	adSkip        sync.Map
 	rdClients     sync.Map
 	uploadSem     chan struct{}
 	UploadWg      sync.WaitGroup
@@ -46,6 +49,10 @@ func (p *Poller) SetRDKeyProvider(provider realdebrid.KeyProvider) {
 
 func (p *Poller) SetRDHashLookup(lookup realdebrid.HashLookup) {
 	p.rdHashLookup = lookup
+}
+
+func (p *Poller) SetAllDebrid(client *alldebrid.Client) {
+	p.ad = client
 }
 
 func New(qb *qbit.Client, r2 *r2.Client, store *jobs.Store, interval time.Duration) *Poller {
@@ -184,6 +191,11 @@ func (p *Poller) poll(ctx context.Context) {
 			continue
 		}
 
+		if job.Source == "hoster" {
+			p.pollHosterJob(ctx, job)
+			continue
+		}
+
 		if job.Source == "usenet" {
 			p.pollUsenetJob(ctx, job)
 			continue
@@ -199,6 +211,15 @@ func (p *Poller) poll(ctx context.Context) {
 					continue
 				}
 				p.rdSkip.Store(job.InfoHash, true)
+			}
+		}
+
+		if job.Status == jobs.StatusPending && p.ad != nil {
+			if _, skip := p.adSkip.Load(job.InfoHash); !skip {
+				if p.tryAllDebrid(ctx, job) {
+					continue
+				}
+				p.adSkip.Store(job.InfoHash, true)
 			}
 		}
 
