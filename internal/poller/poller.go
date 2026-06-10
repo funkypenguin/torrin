@@ -22,6 +22,8 @@ type Poller struct {
 	rdHashLookup  realdebrid.HashLookup
 	rdDownloadDir string
 	ad            *alldebrid.Client
+	pmKeyProvider func(userID string) string
+	tbKeyProvider func(userID string) string
 	r2            *r2.Client
 	store         *jobs.Store
 	interval      time.Duration
@@ -29,6 +31,8 @@ type Poller struct {
 	uploading     sync.Map
 	rdSkip        sync.Map
 	adSkip        sync.Map
+	pmSkip        sync.Map
+	tbSkip        sync.Map
 	rdClients     sync.Map
 	uploadSem     chan struct{}
 	UploadWg      sync.WaitGroup
@@ -53,6 +57,14 @@ func (p *Poller) SetRDHashLookup(lookup realdebrid.HashLookup) {
 
 func (p *Poller) SetAllDebrid(client *alldebrid.Client) {
 	p.ad = client
+}
+
+func (p *Poller) SetPremiumizeKeyProvider(fn func(userID string) string) {
+	p.pmKeyProvider = fn
+}
+
+func (p *Poller) SetTorBoxKeyProvider(fn func(userID string) string) {
+	p.tbKeyProvider = fn
 }
 
 func New(qb *qbit.Client, r2 *r2.Client, store *jobs.Store, interval time.Duration) *Poller {
@@ -220,6 +232,24 @@ func (p *Poller) poll(ctx context.Context) {
 					continue
 				}
 				p.adSkip.Store(job.InfoHash, true)
+			}
+		}
+
+		if job.Status == jobs.StatusPending && p.pmKeyProvider != nil {
+			if _, skip := p.pmSkip.Load(job.InfoHash); !skip {
+				if p.tryPremiumize(ctx, job) {
+					continue
+				}
+				p.pmSkip.Store(job.InfoHash, true)
+			}
+		}
+
+		if job.Status == jobs.StatusPending && p.tbKeyProvider != nil {
+			if _, skip := p.tbSkip.Load(job.InfoHash); !skip {
+				if p.tryTorBox(ctx, job) {
+					continue
+				}
+				p.tbSkip.Store(job.InfoHash, true)
 			}
 		}
 

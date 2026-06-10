@@ -169,7 +169,12 @@ func (p *Poller) tryRealDebrid(ctx context.Context, job *jobs.Job) bool {
 	p.UploadWg.Add(1)
 	go func(j *jobs.Job, t *realdebrid.Torrent, torrentID string, rc *realdebrid.Client) {
 		defer p.UploadWg.Done()
-		p.uploadSem <- struct{}{}
+		select {
+		case p.uploadSem <- struct{}{}:
+		case <-ctx.Done():
+			p.uploading.Delete(j.InfoHash)
+			return
+		}
 		defer func() { <-p.uploadSem }()
 		defer p.uploading.Delete(j.InfoHash)
 		defer func() {
@@ -446,7 +451,12 @@ func (p *Poller) pollHosterJob(ctx context.Context, job *jobs.Job) {
 	p.UploadWg.Add(1)
 	go func() {
 		defer p.UploadWg.Done()
-		p.uploadSem <- struct{}{}
+		select {
+		case p.uploadSem <- struct{}{}:
+		case <-ctx.Done():
+			p.uploading.Delete(job.InfoHash)
+			return
+		}
 		defer func() { <-p.uploadSem }()
 		defer p.uploading.Delete(job.InfoHash)
 		defer func() {

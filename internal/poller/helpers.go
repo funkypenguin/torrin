@@ -5,6 +5,12 @@ import (
 	"strings"
 )
 
+type downloadedFile struct {
+	Name string
+	Path string
+	Size int64
+}
+
 func isVideoFile(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {

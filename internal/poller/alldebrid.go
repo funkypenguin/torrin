@@ -101,7 +101,12 @@ func (p *Poller) tryAllDebrid(ctx context.Context, job *jobs.Job) bool {
 	p.UploadWg.Add(1)
 	go func() {
 		defer p.UploadWg.Done()
-		p.uploadSem <- struct{}{}
+		select {
+		case p.uploadSem <- struct{}{}:
+		case <-ctx.Done():
+			p.uploading.Delete(job.InfoHash)
+			return
+		}
 		defer func() { <-p.uploadSem }()
 		defer p.uploading.Delete(job.InfoHash)
 		defer p.ad.DeleteMagnet(ctx, added.ID)

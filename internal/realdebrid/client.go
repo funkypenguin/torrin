@@ -174,34 +174,33 @@ func (c *Client) doJSON(req *http.Request, result interface{}) error {
 }
 
 type rateLimiter struct {
-	mu     sync.Mutex
-	tokens int
-	max    int
-	ticker *time.Ticker
+	mu       sync.Mutex
+	tokens   float64
+	max      float64
+	rate     float64
+	lastTime time.Time
 }
 
 func newRateLimiter(maxPerInterval int, interval time.Duration) *rateLimiter {
-	rl := &rateLimiter{
-		tokens: maxPerInterval,
-		max:    maxPerInterval,
-		ticker: time.NewTicker(interval / time.Duration(maxPerInterval)),
+	return &rateLimiter{
+		tokens:   float64(maxPerInterval),
+		max:      float64(maxPerInterval),
+		rate:     float64(maxPerInterval) / float64(interval),
+		lastTime: time.Now(),
 	}
-	go func() {
-		for range rl.ticker.C {
-			rl.mu.Lock()
-			if rl.tokens < rl.max {
-				rl.tokens++
-			}
-			rl.mu.Unlock()
-		}
-	}()
-	return rl
 }
 
 func (rl *rateLimiter) wait(ctx context.Context) {
 	for {
 		rl.mu.Lock()
-		if rl.tokens > 0 {
+		now := time.Now()
+		elapsed := now.Sub(rl.lastTime)
+		rl.tokens += float64(elapsed) * rl.rate
+		if rl.tokens > rl.max {
+			rl.tokens = rl.max
+		}
+		rl.lastTime = now
+		if rl.tokens >= 1 {
 			rl.tokens--
 			rl.mu.Unlock()
 			return
@@ -210,7 +209,7 @@ func (rl *rateLimiter) wait(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(50 * time.Millisecond):
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
 }

@@ -107,7 +107,12 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 		p.UploadWg.Add(1)
 		go func(j *jobs.Job, files []usenet.OutputFile) {
 			defer p.UploadWg.Done()
-			p.uploadSem <- struct{}{}
+			select {
+			case p.uploadSem <- struct{}{}:
+			case <-ctx.Done():
+				p.uploading.Delete(j.InfoHash)
+				return
+			}
 			defer func() { <-p.uploadSem }()
 			defer p.uploading.Delete(j.InfoHash)
 			defer func() {

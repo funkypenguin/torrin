@@ -95,6 +95,9 @@ func (e *Engine) RunDaily(ctx context.Context) {
 			if totalSize <= e.policy.StorageCapBytes {
 				break
 			}
+			if c.FileSize > 50_000_000_000 {
+				continue
+			}
 			if err := e.deleteFromR2(ctx, c.InfoHash); err != nil {
 				continue
 			}

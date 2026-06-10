@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -76,6 +77,53 @@ type MagnetStatus struct {
 	StatusCode int    `json:"statusCode"`
 	Downloaded int64  `json:"downloaded"`
 	Seeders    int    `json:"seeders"`
+}
+
+func (c *Client) CheckCacheBatch(ctx context.Context, hashes []string) (map[string]bool, error) {
+	if len(hashes) == 0 {
+		return nil, nil
+	}
+
+	form := url.Values{}
+	for _, h := range hashes {
+		form.Add("magnets[]", "magnet:?xt=urn:btih:"+h)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/magnet/upload", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.URL.RawQuery = form.Encode()
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	body, err := c.doRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("check cache batch: %w", err)
+	}
+
+	var data struct {
+		Magnets []MagnetUploadResponse `json:"magnets"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, fmt.Errorf("check cache batch: parse: %w", err)
+	}
+
+	cached := make(map[string]bool)
+	var toDelete []int
+	for _, m := range data.Magnets {
+		if m.Ready {
+			cached[strings.ToLower(m.Hash)] = true
+		}
+		if m.ID > 0 {
+			toDelete = append(toDelete, m.ID)
+		}
+	}
+
+	for _, id := range toDelete {
+		c.DeleteMagnet(ctx, id)
+	}
+
+	return cached, nil
 }
 
 func (c *Client) AddMagnet(ctx context.Context, magnet string) (*MagnetUploadResponse, error) {
@@ -185,6 +233,39 @@ func (c *Client) doRequest(req *http.Request) (json.RawMessage, error) {
 	}
 
 	return apiResp.Data, nil
+}
+
+type MagnetListItem struct {
+	ID       int    `json:"id"`
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	Hash     string `json:"hash"`
+	Status   string `json:"status"`
+}
+
+func (c *Client) ListMagnets(ctx context.Context, status string) ([]MagnetListItem, error) {
+	path := baseURL + ".1/magnet/status"
+	if status != "" {
+		path += "?status=" + status
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	body, err := c.doRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("list magnets: %w", err)
+	}
+
+	var data struct {
+		Magnets []MagnetListItem `json:"magnets"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return nil, fmt.Errorf("list magnets: parse: %w", err)
+	}
+	return data.Magnets, nil
 }
 
 func (c *Client) Unlock(ctx context.Context, link string) (*UnlockResponse, error) {
