@@ -7,7 +7,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.17
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.19
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
+	github.com/dustin/go-nntp v0.0.0-20210723005859-f00d51cf8cc1
+	github.com/etix/goscrape v0.0.0-20180731120256-0265a7239aef
+	github.com/lindell/go-burner-email-providers v1.0.119
 	github.com/mattn/go-sqlite3 v1.14.24
+	github.com/mmcdole/gofeed v1.3.0
 	github.com/sahilm/fuzzy v0.1.2
 	github.com/torrin-app/torrent-name-parser v0.5.2
 )
@@ -26,10 +30,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.23 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.23 // indirect
 	github.com/aws/smithy-go v1.25.1 // indirect
-	github.com/dustin/go-nntp v0.0.0-20210723005859-f00d51cf8cc1 // indirect
-	github.com/etix/goscrape v0.0.0-20180731120256-0265a7239aef // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/mmcdole/gofeed v1.3.0 // indirect
 	github.com/mmcdole/goxpp v1.1.1-0.20240225020742-a0c311522b23 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
