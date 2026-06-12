@@ -60,8 +60,6 @@ github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnr
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
-github.com/lindell/go-burner-email-providers v1.0.119 h1:FEkRPiOzsSDhltVz7QihIXilrqWv0uv1eobADm1Dr+U=
-github.com/lindell/go-burner-email-providers v1.0.119/go.mod h1:L7nof2FzOIgrhS/UZ2+NG/kHgAjj10iQsoHgIuojCtU=
 github.com/mattn/go-sqlite3 v1.14.24 h1:tpSp2G2KyMnnQu99ngJ47EIkWVmliIizyZBfPrBWDRM=
 github.com/mattn/go-sqlite3 v1.14.24/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
 github.com/mmcdole/gofeed v1.3.0 h1:5yn+HeqlcvjMeAI4gu6T+crm7d0anY85+M+v6fIFNG4=
@@ -81,6 +79,8 @@ github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
 github.com/stretchr/testify v1.8.1 h1:w7B6lhMri9wdJUVmEZPGGhZzrYTPvgJArz7wNPgYKsk=
 github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
+github.com/torrin-app/go-burner-email-providers v0.0.0-20260612223342-799f34450c5b h1:CkuCTOfX4/uFU+BXa2QFCk0Tb02QiDhB3PDsqPKe+4Y=
+github.com/torrin-app/go-burner-email-providers v0.0.0-20260612223342-799f34450c5b/go.mod h1:L7nof2FzOIgrhS/UZ2+NG/kHgAjj10iQsoHgIuojCtU=
 github.com/torrin-app/torrent-name-parser v0.5.2 h1:WuWqhKgw2Ica6i5covQ7T+9J2SHxsPEKyKGbbBAXitE=
 github.com/torrin-app/torrent-name-parser v0.5.2/go.mod h1:oTeybQmxhjjmWIFE6f3A9zZkGZmoaoYlWQ+IGlj9a80=
 golang.org/x/net v0.0.0-20210916014120-12bc252f5db8/go.mod h1:9nx3DQGgdP8bBQD5qxJ1jj9UTztislL4KSBs9R2vV5Y=

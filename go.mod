@@ -37,3 +37,5 @@ require (
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 )
+
+replace github.com/lindell/go-burner-email-providers => github.com/torrin-app/go-burner-email-providers v0.0.0-20260612223342-799f34450c5b
