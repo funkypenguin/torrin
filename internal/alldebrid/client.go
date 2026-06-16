@@ -83,7 +83,19 @@ func (c *Client) CheckCacheBatch(ctx context.Context, hashes []string) (map[stri
 	if len(hashes) == 0 {
 		return nil, nil
 	}
+	cached := make(map[string]bool)
+	const chunk = 10
+	for i := 0; i < len(hashes); i += chunk {
+		end := i + chunk
+		if end > len(hashes) {
+			end = len(hashes)
+		}
+		c.checkCacheChunk(ctx, hashes[i:end], cached)
+	}
+	return cached, nil
+}
 
+func (c *Client) checkCacheChunk(ctx context.Context, hashes []string, cached map[string]bool) {
 	form := url.Values{}
 	for _, h := range hashes {
 		form.Add("magnets[]", "magnet:?xt=urn:btih:"+h)
@@ -91,25 +103,33 @@ func (c *Client) CheckCacheBatch(ctx context.Context, hashes []string) (map[stri
 
 	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/magnet/upload", nil)
 	if err != nil {
-		return nil, err
+		return
 	}
 	req.URL.RawQuery = form.Encode()
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
+	var toDelete []int
+	defer func() {
+		if len(toDelete) == 0 {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		defer cancel()
+		for _, id := range toDelete {
+			c.DeleteMagnet(cleanupCtx, id)
+		}
+	}()
+
 	body, err := c.doRequest(req)
 	if err != nil {
-		return nil, fmt.Errorf("check cache batch: %w", err)
+		return
 	}
-
 	var data struct {
 		Magnets []MagnetUploadResponse `json:"magnets"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, fmt.Errorf("check cache batch: parse: %w", err)
+		return
 	}
-
-	cached := make(map[string]bool)
-	var toDelete []int
 	for _, m := range data.Magnets {
 		if m.Ready {
 			cached[strings.ToLower(m.Hash)] = true
@@ -118,12 +138,6 @@ func (c *Client) CheckCacheBatch(ctx context.Context, hashes []string) (map[stri
 			toDelete = append(toDelete, m.ID)
 		}
 	}
-
-	for _, id := range toDelete {
-		c.DeleteMagnet(ctx, id)
-	}
-
-	return cached, nil
 }
 
 func (c *Client) AddMagnet(ctx context.Context, magnet string) (*MagnetUploadResponse, error) {
@@ -236,11 +250,39 @@ func (c *Client) doRequest(req *http.Request) (json.RawMessage, error) {
 }
 
 type MagnetListItem struct {
-	ID       int    `json:"id"`
-	Filename string `json:"filename"`
-	Size     int64  `json:"size"`
-	Hash     string `json:"hash"`
-	Status   string `json:"status"`
+	ID         int    `json:"id"`
+	Filename   string `json:"filename"`
+	Size       int64  `json:"size"`
+	Hash       string `json:"hash"`
+	Status     string `json:"status"`
+	UploadDate int64  `json:"uploadDate"`
+}
+
+func isDeadMagnetStatus(s string) bool {
+	s = strings.ToLower(s)
+	return strings.Contains(s, "no peer") ||
+		strings.Contains(s, "not available") ||
+		strings.Contains(s, "expired") ||
+		strings.Contains(s, "error")
+}
+
+func (c *Client) ReapOrphanMagnets(ctx context.Context) (int, error) {
+	mags, err := c.ListMagnets(ctx, "")
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().Unix()
+	deleted := 0
+	for _, m := range mags {
+		stale := m.UploadDate > 0 && now-m.UploadDate > 20*60
+		readyStale := stale && strings.Contains(strings.ToLower(m.Status), "ready")
+		if isDeadMagnetStatus(m.Status) || readyStale {
+			if c.DeleteMagnet(ctx, m.ID) == nil {
+				deleted++
+			}
+		}
+	}
+	return deleted, nil
 }
 
 func (c *Client) ListMagnets(ctx context.Context, status string) ([]MagnetListItem, error) {

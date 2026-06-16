@@ -24,6 +24,8 @@ func NewProxy(proxyURL string) *Proxy {
 		}
 	}
 	transport.ResponseHeaderTimeout = 30 * time.Second
+	transport.DisableKeepAlives = true
+	transport.IdleConnTimeout = 5 * time.Second
 	return &Proxy{
 		httpClient: &http.Client{
 			Timeout:   4 * time.Hour,

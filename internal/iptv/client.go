@@ -28,6 +28,10 @@ type Client struct {
 	seriesNames []string
 	seriesMu    sync.RWMutex
 	seriesTime  time.Time
+
+	liveCache []LiveChannel
+	liveMu    sync.RWMutex
+	liveTime  time.Time
 }
 
 func NewClient(apiURL, username, password string) *Client {
@@ -308,6 +312,108 @@ func (c *Client) streamURL(streamID int, ext string) string {
 	}
 	return fmt.Sprintf("%s/movie/%s/%s/%d.%s",
 		c.apiURL, c.username, c.password, streamID, ext)
+}
+
+func (c *Client) liveStreamURL(streamID int, ext string) string {
+	if c.serverInfo != nil {
+		return fmt.Sprintf("http://%s:%s/live/%s/%s/%d.%s",
+			c.serverInfo.URL, c.serverInfo.Port, c.username, c.password, streamID, ext)
+	}
+	return fmt.Sprintf("%s/live/%s/%s/%d.%s",
+		c.apiURL, c.username, c.password, streamID, ext)
+}
+
+func (c *Client) GetLiveStreamURL(streamID int, ext string) string {
+	return c.liveStreamURL(streamID, "m3u8")
+}
+
+var sportsKeywords = []string{
+	"sport", "nfl", "nba", "nhl", "mlb", "ncaa", "ufc", "ppv", "espn", "dazn",
+	"bein", "formula", "f1", "motogp", "golf", "tennis", "soccer", "football",
+	"rugby", "epl", "mls", "uefa", "bundesliga", "movistar liga", "fifa", "wnba",
+	"setanta", "dirtvision", "gaago", "flo sport", "flocollege", "tsn", "stan sport",
+	"fight", "fite", "wwe", "boxing", "league", "eurosport", "optus sport",
+	"spark sport", "mola sport", "dyn sport", "magenta sport", "ohl", "whl", "qmjhl",
+	"ahl", "sphl", "nrl", "big ten", "loi", "betting tv",
+}
+
+func isSportsCategory(name string) bool {
+	n := strings.ToLower(name)
+	for _, kw := range sportsKeywords {
+		if strings.Contains(n, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) loadLiveSports(ctx context.Context) error {
+	c.liveMu.RLock()
+	if time.Since(c.liveTime) < 6*time.Hour && len(c.liveCache) > 0 {
+		c.liveMu.RUnlock()
+		return nil
+	}
+	c.liveMu.RUnlock()
+
+	resp, err := c.api(ctx, "get_live_categories")
+	if err != nil {
+		return err
+	}
+	var cats []LiveCategory
+	err = json.NewDecoder(resp.Body).Decode(&cats)
+	resp.Body.Close()
+	if err != nil {
+		return err
+	}
+
+	sportsCats := map[string]string{}
+	for _, cat := range cats {
+		if isSportsCategory(cat.CategoryName) {
+			sportsCats[cat.CategoryID] = cat.CategoryName
+		}
+	}
+
+	respS, err := c.api(ctx, "get_live_streams")
+	if err != nil {
+		return err
+	}
+	var streams []LiveStream
+	err = json.NewDecoder(respS.Body).Decode(&streams)
+	respS.Body.Close()
+	if err != nil {
+		return err
+	}
+
+	var channels []LiveChannel
+	for _, s := range streams {
+		catName, ok := sportsCats[s.CategoryID]
+		if !ok {
+			continue
+		}
+		channels = append(channels, LiveChannel{
+			StreamID: s.StreamID,
+			Name:     s.Name,
+			Logo:     s.StreamIcon,
+			Category: catName,
+		})
+	}
+
+	c.liveMu.Lock()
+	c.liveCache = channels
+	c.liveTime = time.Now()
+	c.liveMu.Unlock()
+	return nil
+}
+
+func (c *Client) SportsChannels(ctx context.Context) ([]LiveChannel, error) {
+	if err := c.loadLiveSports(ctx); err != nil {
+		return nil, err
+	}
+	c.liveMu.RLock()
+	defer c.liveMu.RUnlock()
+	out := make([]LiveChannel, len(c.liveCache))
+	copy(out, c.liveCache)
+	return out, nil
 }
 
 func (c *Client) CatalogSize() int {

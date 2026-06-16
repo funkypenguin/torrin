@@ -70,8 +70,12 @@ func (p *Poller) tryTorBox(ctx context.Context, job *jobs.Job) bool {
 
 	job.Status = jobs.StatusProcessing
 	job.Error = "downloading"
-	if created.Data.Name != "" && job.Name == "" {
-		job.Name = created.Data.Name
+	if job.Name == "" {
+		if created.Data.Name != "" {
+			job.Name = created.Data.Name
+		} else if cached[0].Name != "" {
+			job.Name = cached[0].Name
+		}
 	}
 	job.FileSize = cached[0].Size
 	p.store.SetFileSize(job.ID, cached[0].Size)
@@ -98,10 +102,9 @@ func (p *Poller) tryTorBox(ctx context.Context, job *jobs.Job) bool {
 			}
 		}()
 
-		// Get download link.
-		dlURL, err := client.RequestDownloadLink(ctx, torrentID, 0)
+		dlURL, err := client.RequestDownloadLinkWithRetry(ctx, torrentID, 0)
 		if err != nil {
-			log.Error("tb request dl failed", "err", err)
+			log.Error("tb request dl failed (all CDNs)", "err", err)
 			job.Status = jobs.StatusFailed
 			job.Error = "download link failed"
 			p.store.Update(job)

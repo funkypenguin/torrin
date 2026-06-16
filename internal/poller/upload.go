@@ -39,6 +39,11 @@ func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.T
 
 		localPath := filepath.Join(t.SavePath, f.Name)
 
+		if fi, err := os.Stat(localPath); err == nil && fi.Size() < minVideoFileSize {
+			slog.Error("file too small, skipping", "job", job.ID, "file", baseName, "size", fi.Size())
+			continue
+		}
+
 		slog.Info("uploading to R2", "job", job.ID, "file", baseName, "path", localPath)
 
 		file, err := os.Open(localPath)

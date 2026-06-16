@@ -14,7 +14,8 @@ type Policy struct {
 	NeverAccessedTTL int   // Days before deleting never-watched content (default: 7)
 	StandardTTL      int   // Days of inactivity for 1-9 access count (default: 30)
 	PopularTTL       int   // Days of inactivity for 10+ access count (default: 60)
-	StorageCapBytes  int64 // Max total cached bytes before forced eviction (default: 450GB)
+	StorageCapBytes  int64 // Soft cap; over this the budget pass reclaims cold content
+	BudgetGraceDays  int   // Budget pass never touches content idle fewer than this many days
 }
 
 var DefaultPolicy = Policy{
@@ -22,6 +23,7 @@ var DefaultPolicy = Policy{
 	StandardTTL:      14,
 	PopularTTL:       45,
 	StorageCapBytes:  300_000_000_000,
+	BudgetGraceDays:  3,
 }
 
 // Engine handles cache eviction.
@@ -76,7 +78,7 @@ func (e *Engine) RunDaily(ctx context.Context) {
 			}
 			siblings, _ := e.store.ListByInfoHash(c.InfoHash)
 			for _, sib := range siblings {
-				sib.Status = jobs.StatusFailed
+				sib.Status = jobs.StatusEvicted
 				sib.Error = "content evicted from cache"
 				e.store.Update(sib)
 			}
@@ -95,7 +97,7 @@ func (e *Engine) RunDaily(ctx context.Context) {
 			if totalSize <= e.policy.StorageCapBytes {
 				break
 			}
-			if c.FileSize > 50_000_000_000 {
+			if c.DaysSinceAccess < e.policy.BudgetGraceDays {
 				continue
 			}
 			if err := e.deleteFromR2(ctx, c.InfoHash); err != nil {
@@ -103,14 +105,19 @@ func (e *Engine) RunDaily(ctx context.Context) {
 			}
 			siblings, _ := e.store.ListByInfoHash(c.InfoHash)
 			for _, sib := range siblings {
-				sib.Status = jobs.StatusFailed
+				sib.Status = jobs.StatusEvicted
 				sib.Error = "content evicted from cache"
 				e.store.Update(sib)
 			}
 			totalSize -= c.FileSize
 			evicted++
 			freedBytes += c.FileSize
-			slog.Info("budget evicted", "name", c.Name, "size_mb", c.FileSize/1e6)
+			slog.Info("budget evicted", "name", c.Name, "size_mb", c.FileSize/1e6, "idle_days", c.DaysSinceAccess)
+		}
+
+		if totalSize > e.policy.StorageCapBytes {
+			slog.Warn("eviction: still over cap after budget pass; remaining content within grace window",
+				"total_gb", totalSize/1e9, "cap_gb", e.policy.StorageCapBytes/1e9, "grace_days", e.policy.BudgetGraceDays)
 		}
 	}
 

@@ -40,14 +40,17 @@ func NewClient(baseURL, apiKey string) *Client {
 // NewClientWithProxy creates a client that routes through an HTTP proxy.
 func NewClientWithProxy(baseURL, apiKey, proxyURL string) *Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	proxied := false
 	if proxyURL != "" {
 		if p, err := url.Parse(proxyURL); err == nil {
 			transport.Proxy = http.ProxyURL(p)
+			proxied = true
 		}
 	}
 	// Block connections to private/internal IPs (SSRF prevention).
-	// Skipped when allowLocal is set (tests only).
-	transport.DialContext = ssrfSafeDialer(false)
+	if !proxied {
+		transport.DialContext = ssrfSafeDialer(false)
+	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,

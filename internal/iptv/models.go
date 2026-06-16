@@ -31,6 +31,25 @@ type Series struct {
 	Name     string `json:"name"`
 }
 
+type LiveCategory struct {
+	CategoryID   string `json:"category_id"`
+	CategoryName string `json:"category_name"`
+}
+
+type LiveStream struct {
+	StreamID   int    `json:"stream_id"`
+	Name       string `json:"name"`
+	StreamIcon string `json:"stream_icon"`
+	CategoryID string `json:"category_id"`
+}
+
+type LiveChannel struct {
+	StreamID int    `json:"stream_id"`
+	Name     string `json:"name"`
+	Logo     string `json:"logo"`
+	Category string `json:"category"`
+}
+
 type Episode struct {
 	ID                 string `json:"id"`
 	EpisodeNum         string `json:"episode_num"`

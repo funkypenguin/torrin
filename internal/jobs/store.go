@@ -302,6 +302,143 @@ type UserStats struct {
 	TotalAccesses  int64 `json:"total_accesses"`
 }
 
+type WrappedContent struct {
+	Name     string `json:"name"`
+	InfoHash string `json:"info_hash"`
+	ImdbID   string `json:"imdb_id,omitempty"`
+	Views    int64  `json:"views"`
+	Size     int64  `json:"size"`
+}
+
+type UserWrapped struct {
+	TotalDownloads int              `json:"total_downloads"`
+	TotalCached    int              `json:"total_cached"`
+	TotalStreams   int64            `json:"total_streams"`
+	TotalBytes     int64            `json:"total_bytes"`
+	ActiveDays     int              `json:"active_days"`
+	Streak         int              `json:"streak_days"`
+	BiggestFile    int64            `json:"biggest_file"`
+	TopContent     []WrappedContent `json:"top_content"`
+	BySource       map[string]int   `json:"by_source"`
+	MemberSince    string           `json:"member_since"`
+}
+
+type PlatformWrapped struct {
+	TotalUsers     int              `json:"total_users"`
+	TotalDownloads int              `json:"total_downloads"`
+	TotalCached    int              `json:"total_cached"`
+	TotalStreams   int64            `json:"total_streams"`
+	TotalBytes     int64            `json:"total_bytes"`
+	UniqueHashes   int              `json:"unique_hashes"`
+	TopContent     []WrappedContent `json:"top_content"`
+	BySource       map[string]int   `json:"by_source"`
+	ActiveToday    int              `json:"active_today"`
+}
+
+func (s *Store) GetUserWrapped(userID string) (*UserWrapped, error) {
+	w := &UserWrapped{BySource: make(map[string]int)}
+
+	s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE user_id=?`, userID).Scan(&w.TotalDownloads)
+	s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE user_id=? AND status IN ('complete','cached')`, userID).Scan(&w.TotalCached)
+	s.db.QueryRow(`SELECT COALESCE(SUM(access_count), 0) FROM jobs WHERE user_id=?`, userID).Scan(&w.TotalStreams)
+	s.db.QueryRow(`SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE user_id=? AND status IN ('complete','cached')`, userID).Scan(&w.TotalBytes)
+	s.db.QueryRow(`SELECT COALESCE(MAX(file_size), 0) FROM jobs WHERE user_id=? AND status IN ('complete','cached')`, userID).Scan(&w.BiggestFile)
+	s.db.QueryRow(`SELECT COUNT(DISTINCT date(created_at)) FROM jobs WHERE user_id=?`, userID).Scan(&w.ActiveDays)
+
+	rows, _ := s.db.Query(`
+		SELECT name, info_hash, imdb_id, access_count, file_size
+		FROM jobs WHERE user_id=? AND status IN ('complete','cached') AND name != ''
+		ORDER BY access_count DESC LIMIT 5`, userID)
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var c WrappedContent
+			rows.Scan(&c.Name, &c.InfoHash, &c.ImdbID, &c.Views, &c.Size)
+			w.TopContent = append(w.TopContent, c)
+		}
+	}
+
+	srcRows, _ := s.db.Query(`SELECT COALESCE(NULLIF(source,''), 'torrent'), COUNT(*) FROM jobs WHERE user_id=? GROUP BY source`, userID)
+	if srcRows != nil {
+		defer srcRows.Close()
+		for srcRows.Next() {
+			var src string
+			var count int
+			srcRows.Scan(&src, &count)
+			w.BySource[src] = count
+		}
+	}
+
+	streakRows, _ := s.db.Query(`SELECT DISTINCT date(created_at) as d FROM jobs WHERE user_id=? ORDER BY d DESC`, userID)
+	if streakRows != nil {
+		defer streakRows.Close()
+		var dates []string
+		for streakRows.Next() {
+			var d string
+			streakRows.Scan(&d)
+			dates = append(dates, d)
+		}
+		w.Streak = calcStreak(dates)
+	}
+
+	return w, nil
+}
+
+func (s *Store) GetPlatformWrapped() (*PlatformWrapped, error) {
+	p := &PlatformWrapped{BySource: make(map[string]int)}
+
+	s.db.QueryRow(`SELECT COUNT(DISTINCT user_id) FROM jobs WHERE user_id != '' AND user_id != 'system'`).Scan(&p.TotalUsers)
+	s.db.QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&p.TotalDownloads)
+	s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE status IN ('complete','cached')`).Scan(&p.TotalCached)
+	s.db.QueryRow(`SELECT COALESCE(SUM(access_count), 0) FROM jobs`).Scan(&p.TotalStreams)
+	s.db.QueryRow(`SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE status IN ('complete','cached')`).Scan(&p.TotalBytes)
+	s.db.QueryRow(`SELECT COUNT(DISTINCT info_hash) FROM jobs WHERE status IN ('complete','cached')`).Scan(&p.UniqueHashes)
+	s.db.QueryRow(`SELECT COUNT(DISTINCT user_id) FROM jobs WHERE date(created_at) = date('now')`).Scan(&p.ActiveToday)
+
+	rows, _ := s.db.Query(`
+		SELECT name, info_hash, imdb_id, SUM(access_count) as views, MAX(file_size) as size
+		FROM jobs WHERE status IN ('complete','cached') AND name != ''
+		GROUP BY info_hash ORDER BY views DESC LIMIT 10`)
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var c WrappedContent
+			rows.Scan(&c.Name, &c.InfoHash, &c.ImdbID, &c.Views, &c.Size)
+			p.TopContent = append(p.TopContent, c)
+		}
+	}
+
+	srcRows, _ := s.db.Query(`SELECT COALESCE(NULLIF(source,''), 'torrent'), COUNT(*) FROM jobs GROUP BY source`)
+	if srcRows != nil {
+		defer srcRows.Close()
+		for srcRows.Next() {
+			var src string
+			var count int
+			srcRows.Scan(&src, &count)
+			p.BySource[src] = count
+		}
+	}
+
+	return p, nil
+}
+
+func calcStreak(dates []string) int {
+	if len(dates) == 0 {
+		return 0
+	}
+	streak := 1
+	for i := 1; i < len(dates); i++ {
+		t1, e1 := time.Parse("2006-01-02", dates[i-1])
+		t2, e2 := time.Parse("2006-01-02", dates[i])
+		if e1 == nil && e2 == nil && t1.Sub(t2).Hours() == 24 {
+			streak++
+			continue
+		}
+		break
+	}
+	return streak
+}
+
 func (s *Store) GetUserStats(userID string) (*UserStats, error) {
 	st := &UserStats{}
 	s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE user_id=?`, userID).Scan(&st.TotalDownloads)
@@ -331,7 +468,7 @@ func (s *Store) GetUserHistory(userID string, limit int) ([]HistoryEntry, error)
 	rows, err := s.db.Query(`
 		SELECT id, name, info_hash, status, file_size, access_count, created_at,
 			COALESCE(last_accessed_at, '') as last_accessed
-		FROM jobs WHERE user_id=? AND status IN ('complete','cached')
+		FROM jobs WHERE user_id=? AND status IN ('complete','cached','evicted')
 		ORDER BY created_at DESC LIMIT ?`, userID, limit)
 	if err != nil {
 		return nil, err

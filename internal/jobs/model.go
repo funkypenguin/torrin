@@ -12,7 +12,12 @@ const (
 	StatusComplete   Status = "complete"   // Done — streaming URLs available
 	StatusFailed     Status = "failed"     // Terminal failure
 	StatusCached     Status = "cached"     // Already in R2, instant response
+	StatusEvicted    Status = "evicted"    // Was cached, R2 objects removed; row kept for re-cache
 )
+
+func IsActiveStatus(s Status) bool {
+	return s == StatusPending || s == StatusQueued || s == StatusProcessing
+}
 
 type Job struct {
 	ID           string    `json:"id"`

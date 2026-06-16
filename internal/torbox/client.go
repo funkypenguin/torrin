@@ -170,6 +170,34 @@ func (c *Client) RequestDownloadLink(ctx context.Context, torrentID int, fileID 
 	return resp.Data, nil
 }
 
+// RequestDownloadLinkWithRetry requests a download link and verifies the CDN is reachable.
+// Retries up to 3 times with new links in case the CDN node is down.
+func (c *Client) RequestDownloadLinkWithRetry(ctx context.Context, torrentID int, fileID int) (string, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		dlURL, err := c.RequestDownloadLink(ctx, torrentID, fileID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		testReq, _ := http.NewRequestWithContext(ctx, "HEAD", dlURL, nil)
+		resp, err := c.dlClient.Do(testReq)
+		if err != nil {
+			lastErr = fmt.Errorf("cdn unreachable (attempt %d): %w", attempt+1, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			lastErr = fmt.Errorf("cdn returned %d (attempt %d)", resp.StatusCode, attempt+1)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		return dlURL, nil
+	}
+	return "", fmt.Errorf("cdn unreachable after retries: %w", lastErr)
+}
+
 // DeleteTorrent removes a torrent.
 func (c *Client) DeleteTorrent(ctx context.Context, torrentID int) error {
 	payload := fmt.Sprintf(`{"torrent_id":%d,"operation":"delete"}`, torrentID)

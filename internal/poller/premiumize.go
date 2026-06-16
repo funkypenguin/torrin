@@ -224,8 +224,20 @@ func (p *Poller) downloadFromURL(ctx context.Context, client interface {
 	return nil
 }
 
-// uploadAndFinalizeFiles is shared upload logic for PM/TB downloads.
+const minVideoFileSize = 1_000_000
+
 func (p *Poller) uploadAndFinalizeFiles(ctx context.Context, job *jobs.Job, files []downloadedFile, log *slog.Logger) {
+	// Validate file sizes before uploading.
+	for _, f := range files {
+		if f.Size < minVideoFileSize {
+			log.Error("file too small, likely corrupted", "file", f.Name, "size", f.Size)
+			job.Status = jobs.StatusFailed
+			job.Error = "download corrupted (file too small)"
+			p.store.Update(job)
+			return
+		}
+	}
+
 	job.Error = "uploading to cache"
 	p.store.Update(job)
 
