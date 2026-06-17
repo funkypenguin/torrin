@@ -149,7 +149,7 @@ func TestProcess_NoArchives(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "movie.mkv"), []byte("video content"), 0644)
 	os.WriteFile(filepath.Join(dir, "info.nfo"), []byte("nfo"), 0644)
 
-	results, err := Process(dir)
+	results, err := Process(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,5 +169,33 @@ func TestProcess_NoArchives(t *testing.T) {
 	}
 	if !hasVideo {
 		t.Fatal("expected movie.mkv in results")
+	}
+}
+
+func TestPasswordCandidates(t *testing.T) {
+	// meta first, then {{pw}} and password= from names, deduped.
+	got := PasswordCandidates("metaPW",
+		"My.Movie.2024 {{filePW}}.nzb",
+		"Other.Thing password=eqPW",
+		"metaPW", // dupe
+	)
+	want := []string{"metaPW", "filePW", "eqPW"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("candidate %d: got %q want %q", i, got[i], want[i])
+		}
+	}
+
+	// No meta + plain name = no candidates (unencrypted release).
+	if c := PasswordCandidates("", "Plain.Movie.2024.1080p.WEB-DL.nzb"); len(c) != 0 {
+		t.Fatalf("expected no candidates, got %v", c)
+	}
+
+	// Meta only.
+	if c := PasswordCandidates("only", "plain.nzb"); len(c) != 1 || c[0] != "only" {
+		t.Fatalf("expected [only], got %v", c)
 	}
 }

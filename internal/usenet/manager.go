@@ -235,7 +235,8 @@ func (m *Manager) run(ctx context.Context, dl *Download, parsed *nzb.NZB, pool *
 	dl.mu.Unlock()
 
 	slog.Info("usenet post-processing", "hash", dl.NZBHash)
-	outputFiles, err := postproc.Process(dl.OutputDir, dl.NZBName)
+	pwds := postproc.PasswordCandidates(parsed.Meta["password"], dl.NZBName, parsed.Name())
+	outputFiles, err := postproc.Process(dl.OutputDir, pwds, dl.NZBName)
 	if err != nil {
 		dl.mu.Lock()
 		dl.Status = StatusFailed

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -16,7 +17,10 @@ type OutputFile struct {
 	Size int64
 }
 
-func Process(dir string, jobName ...string) ([]OutputFile, error) {
+// Process repairs (par2) and extracts (unrar) a downloaded usenet payload.
+// passwords is the ordered list of candidate archive passwords to try (see
+// PasswordCandidates); empty/nil means the release isn't encrypted.
+func Process(dir string, passwords []string, jobName ...string) ([]OutputFile, error) {
 	// Step 1: PAR2 repair if par2 files exist.
 	if par2File := findFile(dir, ".par2", "vol"); par2File != "" {
 		slog.Info("running par2 repair", "dir", dir)
@@ -36,8 +40,8 @@ func Process(dir string, jobName ...string) ([]OutputFile, error) {
 	if rarFile := findFirstRar(dir); rarFile != "" {
 		inputSize := dirSize(dir)
 
-		slog.Info("extracting rar", "file", rarFile)
-		if err := runUnrar(rarFile, dir); err != nil {
+		slog.Info("extracting rar", "file", rarFile, "password_candidates", len(passwords))
+		if err := runUnrar(rarFile, dir, passwords); err != nil {
 			return nil, fmt.Errorf("unrar: %w", err)
 		}
 
@@ -233,13 +237,76 @@ func runPar2(par2File string) error {
 	return nil
 }
 
-func runUnrar(rarFile, outputDir string) error {
-	cmd := exec.Command("unrar", "e", "-o+", "-y", rarFile, outputDir+"/")
+// runUnrar extracts rarFile, trying no password first (handles unencrypted
+// archives) then each candidate in order. A wrong password fails fast — unrar
+// rejects it at the archive header before writing files — so trying a few is
+// cheap and safe.
+func runUnrar(rarFile, outputDir string, passwords []string) error {
+	var lastErr error
+	for _, pw := range append([]string{""}, passwords...) {
+		if err := unrarOnce(rarFile, outputDir, pw); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+func unrarOnce(rarFile, outputDir, password string) error {
+	// -p<pw> supplies the archive password; -p- disables the interactive prompt
+	// so an encrypted archive with a wrong/absent password fails fast instead of
+	// hanging/aborting on the prompt (the old behavior, exit 255).
+	args := []string{"e", "-o+", "-y"}
+	if password != "" {
+		args = append(args, "-p"+password)
+	} else {
+		args = append(args, "-p-")
+	}
+	args = append(args, rarFile, outputDir+"/")
+	cmd := exec.Command("unrar", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
+}
+
+// PasswordCandidates builds the ordered, deduped list of passwords to try for a
+// usenet archive: the NZB <meta type="password"> (the standard, most reliable
+// source) first, then any password embedded in the names ({{pw}} or
+// password=pw, which some indexers use). Empties and dupes are dropped.
+func PasswordCandidates(metaPassword string, names ...string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	add(metaPassword)
+	for _, n := range names {
+		add(passwordFromName(n))
+	}
+	return out
+}
+
+var pwBraceRe = regexp.MustCompile(`\{\{([^}]+)\}\}`)
+var pwEqRe = regexp.MustCompile(`(?i)password=([^\s&}]+)`)
+
+// passwordFromName pulls a password embedded in an NZB/job name, e.g.
+// "My.Movie {{secret}}.nzb" or "My.Movie password=secret.nzb".
+func passwordFromName(name string) string {
+	if m := pwBraceRe.FindStringSubmatch(name); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	if m := pwEqRe.FindStringSubmatch(name); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
 }
 
 func cleanArchives(dir string) {
