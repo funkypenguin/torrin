@@ -19,10 +19,10 @@ type Feed struct {
 type Item struct {
 	GUID   string
 	Title  string
-	Magnet string
+	Magnet string // torrent feeds
+	NzbURL string // usenet feeds
 }
 
-// FetchFeed parses an RSS feed and extracts magnet links.
 func FetchFeed(ctx context.Context, feedURL string) ([]Item, error) {
 	fp := gofeed.NewParser()
 	fp.UserAgent = "Torrin/1.0"
@@ -38,7 +38,11 @@ func FetchFeed(ctx context.Context, feedURL string) ([]Item, error) {
 	var items []Item
 	for _, entry := range feed.Items {
 		magnet := extractMagnet(entry)
+		nzbURL := ""
 		if magnet == "" {
+			nzbURL = extractNZB(entry)
+		}
+		if magnet == "" && nzbURL == "" {
 			continue
 		}
 		guid := entry.GUID
@@ -46,15 +50,33 @@ func FetchFeed(ctx context.Context, feedURL string) ([]Item, error) {
 			guid = entry.Link
 		}
 		if guid == "" {
-			guid = magnet
+			if magnet != "" {
+				guid = magnet
+			} else {
+				guid = nzbURL
+			}
 		}
 		items = append(items, Item{
 			GUID:   guid,
 			Title:  entry.Title,
 			Magnet: magnet,
+			NzbURL: nzbURL,
 		})
 	}
 	return items, nil
+}
+
+func extractNZB(entry *gofeed.Item) string {
+	for _, enc := range entry.Enclosures {
+		if strings.Contains(strings.ToLower(enc.Type), "nzb") ||
+			strings.Contains(strings.ToLower(enc.URL), ".nzb") {
+			return enc.URL
+		}
+	}
+	if strings.Contains(strings.ToLower(entry.Link), ".nzb") {
+		return entry.Link
+	}
+	return ""
 }
 
 var magnetRegex = regexp.MustCompile(`magnet:\?xt=urn:btih:[a-zA-Z0-9]+[^\s"<>]*`)
