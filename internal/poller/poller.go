@@ -103,6 +103,18 @@ func (p *Poller) BudgetAvailable() int64 {
 	return avail
 }
 
+func (p *Poller) failDownload(ctx context.Context, job *jobs.Job, reason string) {
+	if ctx.Err() != nil {
+		job.Status = jobs.StatusPending
+		job.Error = ""
+		p.store.Update(job)
+		return
+	}
+	job.Status = jobs.StatusFailed
+	job.Error = reason
+	p.store.Update(job)
+}
+
 func (p *Poller) GetRDClient(apiKey string) *realdebrid.Client {
 	if v, ok := p.rdClients.Load(apiKey); ok {
 		return v.(*realdebrid.Client)

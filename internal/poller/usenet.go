@@ -94,6 +94,13 @@ func (p *Poller) pollUsenetJob(ctx context.Context, job *jobs.Job) {
 		}
 
 	case usenet.StatusFailed:
+		if ctx.Err() != nil {
+			job.Status = jobs.StatusPending
+			job.Error = ""
+			p.store.Update(job)
+			p.usenet.CleanupFiles(job.InfoHash)
+			return
+		}
 		job.Status = jobs.StatusFailed
 		job.Error = snap.Error
 		p.store.Update(job)

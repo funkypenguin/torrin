@@ -147,9 +147,7 @@ func (p *Poller) tryAllDebrid(ctx context.Context, job *jobs.Job) bool {
 			localPath := filepath.Join(tmpDir, filepath.Base(unlocked.Filename))
 			if err := p.downloadHosterFileIdx(ctx, unlocked.Link, localPath, job, unlocked.FileSize, i, len(videoFiles)); err != nil {
 				log.Error("ad download failed", "file", unlocked.Filename, "err", err)
-				job.Status = jobs.StatusFailed
-				job.Error = "download failed"
-				p.store.Update(job)
+				p.failDownload(ctx, job, "download failed")
 				return
 			}
 

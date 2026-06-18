@@ -105,9 +105,7 @@ func (p *Poller) tryTorBox(ctx context.Context, job *jobs.Job) bool {
 		dlURL, err := client.RequestDownloadLinkWithRetry(ctx, torrentID, 0)
 		if err != nil {
 			log.Error("tb request dl failed (all CDNs)", "err", err)
-			job.Status = jobs.StatusFailed
-			job.Error = "download link failed"
-			p.store.Update(job)
+			p.failDownload(ctx, job, "download link failed")
 			return
 		}
 
@@ -125,9 +123,7 @@ func (p *Poller) tryTorBox(ctx context.Context, job *jobs.Job) bool {
 
 		if err := p.downloadFromURL(ctx, client, dlURL, localPath, job, cached[0].Size, 0, 1); err != nil {
 			log.Error("tb download failed", "err", err)
-			job.Status = jobs.StatusFailed
-			job.Error = "download failed"
-			p.store.Update(job)
+			p.failDownload(ctx, job, "download failed")
 			return
 		}
 

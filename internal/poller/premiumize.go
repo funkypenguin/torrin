@@ -130,9 +130,7 @@ func (p *Poller) tryPremiumize(ctx context.Context, job *jobs.Job) bool {
 
 			if err := p.downloadFromURL(ctx, client, vf.Link, localPath, job, vf.Size, i, len(videoFiles)); err != nil {
 				log.Error("pm download failed", "file", name, "err", err)
-				job.Status = jobs.StatusFailed
-				job.Error = "download failed"
-				p.store.Update(job)
+				p.failDownload(ctx, job, "download failed")
 				return
 			}
 

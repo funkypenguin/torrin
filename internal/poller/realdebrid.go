@@ -255,9 +255,7 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 		localPath := filepath.Join(tmpDir, filepath.Base(unrestricted.Filename))
 		if err := p.downloadRDFileWithProgress(ctx, rdClient, unrestricted.Download, localPath, job, unrestricted.FileSize, i, len(torrent.Links)); err != nil {
 			log.Error("rd download failed", "file", unrestricted.Filename, "err", err)
-			job.Status = jobs.StatusFailed
-			job.Error = fmt.Sprintf("download failed: %v", err)
-			p.store.Update(job)
+			p.failDownload(ctx, job, fmt.Sprintf("download failed: %v", err))
 			return
 		}
 
