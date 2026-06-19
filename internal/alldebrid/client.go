@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -345,4 +346,39 @@ func (c *Client) DownloadFile(ctx context.Context, downloadURL string) (io.ReadC
 		return nil, 0, fmt.Errorf("download: HTTP %d", resp.StatusCode)
 	}
 	return resp.Body, resp.ContentLength, nil
+}
+
+func (c *Client) DownloadFileRange(ctx context.Context, downloadURL string, offset int64) (body io.ReadCloser, total int64, full bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if offset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
+	resp, err := c.dlClient.Do(req)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return resp.Body, resp.ContentLength, true, nil
+	case http.StatusPartialContent:
+		return resp.Body, totalFromContentRange(resp.Header.Get("Content-Range")), false, nil
+	default:
+		resp.Body.Close()
+		return nil, 0, false, fmt.Errorf("download: HTTP %d", resp.StatusCode)
+	}
+}
+
+func totalFromContentRange(cr string) int64 {
+	i := strings.LastIndex(cr, "/")
+	if i < 0 || i+1 >= len(cr) {
+		return 0
+	}
+	total, err := strconv.ParseInt(strings.TrimSpace(cr[i+1:]), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return total
 }

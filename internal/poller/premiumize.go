@@ -155,71 +155,13 @@ func (p *Poller) tryPremiumize(ctx context.Context, job *jobs.Job) bool {
 	return true
 }
 
-// downloadFromURL downloads with progress tracking using a generic download func.
 func (p *Poller) downloadFromURL(ctx context.Context, client interface {
-	DownloadFile(context.Context, string) (io.ReadCloser, int64, error)
+	DownloadFileRange(context.Context, string, int64) (io.ReadCloser, int64, bool, error)
 }, downloadURL, localPath string, job *jobs.Job, totalSize int64, fileIdx, fileCount int) error {
-	body, contentLength, err := client.DownloadFile(ctx, downloadURL)
-	if err != nil {
-		return err
+	open := func(offset int64) (io.ReadCloser, int64, bool, error) {
+		return client.DownloadFileRange(ctx, downloadURL, offset)
 	}
-	defer body.Close()
-
-	if contentLength > 0 {
-		totalSize = contentLength
-	}
-
-	f, err := os.Create(localPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	buf := make([]byte, 256*1024)
-	var written int64
-	lastUpdate := time.Now()
-	lastBytes := int64(0)
-
-	for {
-		n, readErr := body.Read(buf)
-		if n > 0 {
-			if _, wErr := f.Write(buf[:n]); wErr != nil {
-				os.Remove(localPath)
-				return wErr
-			}
-			written += int64(n)
-
-			if time.Since(lastUpdate) >= 2*time.Second {
-				elapsed := time.Since(lastUpdate).Seconds()
-				speed := float64(written-lastBytes) / elapsed
-				filePct := 0.0
-				if totalSize > 0 {
-					filePct = float64(written) / float64(totalSize)
-				}
-				overallPct := int((float64(fileIdx) + filePct) / float64(fileCount) * 100)
-				var msg string
-				if fileCount > 1 {
-					msg = fmt.Sprintf("downloading — %d%% (%d/%d, %d B/s)", overallPct, fileIdx+1, fileCount, int64(speed))
-				} else {
-					msg = fmt.Sprintf("downloading — %d%% (%d B/s)", overallPct, int64(speed))
-				}
-				if job.Error != msg {
-					job.Error = msg
-					p.store.Update(job)
-				}
-				lastUpdate = time.Now()
-				lastBytes = written
-			}
-		}
-		if readErr != nil {
-			if readErr == io.EOF {
-				break
-			}
-			os.Remove(localPath)
-			return readErr
-		}
-	}
-	return nil
+	return p.downloadToFile(ctx, open, localPath, job, totalSize, fileIdx, fileCount)
 }
 
 const minVideoFileSize = 1_000_000

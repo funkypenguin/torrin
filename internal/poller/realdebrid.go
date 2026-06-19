@@ -366,68 +366,10 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 
 // updating the job status with download progress.
 func (p *Poller) downloadRDFileWithProgress(ctx context.Context, rdClient *realdebrid.Client, downloadURL, localPath string, job *jobs.Job, totalSize int64, fileIdx, fileCount int) error {
-	body, contentLength, err := rdClient.DownloadFile(ctx, downloadURL)
-	if err != nil {
-		return err
+	open := func(offset int64) (io.ReadCloser, int64, bool, error) {
+		return rdClient.DownloadFileRange(ctx, downloadURL, offset)
 	}
-	defer body.Close()
-
-	if contentLength > 0 {
-		totalSize = contentLength
-	}
-
-	f, err := os.Create(localPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	buf := make([]byte, 256*1024)
-	var written int64
-	lastUpdate := time.Now()
-	lastBytes := int64(0)
-
-	for {
-		n, readErr := body.Read(buf)
-		if n > 0 {
-			if _, wErr := f.Write(buf[:n]); wErr != nil {
-				os.Remove(localPath)
-				return wErr
-			}
-			written += int64(n)
-
-			if time.Since(lastUpdate) >= 2*time.Second {
-				elapsed := time.Since(lastUpdate).Seconds()
-				speed := float64(written-lastBytes) / elapsed
-				speedBps := int64(speed)
-				filePct := 0.0
-				if totalSize > 0 {
-					filePct = float64(written) / float64(totalSize)
-				}
-				overallPct := int((float64(fileIdx) + filePct) / float64(fileCount) * 100)
-				var msg string
-				if fileCount > 1 {
-					msg = fmt.Sprintf("downloading — %d%% (%d/%d, %d B/s)", overallPct, fileIdx+1, fileCount, speedBps)
-				} else {
-					msg = fmt.Sprintf("downloading — %d%% (%d B/s)", overallPct, speedBps)
-				}
-				if job.Error != msg {
-					job.Error = msg
-					p.store.Update(job)
-				}
-				lastUpdate = time.Now()
-				lastBytes = written
-			}
-		}
-		if readErr != nil {
-			if readErr == io.EOF {
-				break
-			}
-			os.Remove(localPath)
-			return readErr
-		}
-	}
-	return nil
+	return p.downloadToFile(ctx, open, localPath, job, totalSize, fileIdx, fileCount)
 }
 
 func (p *Poller) pollHosterJob(ctx context.Context, job *jobs.Job) {
@@ -592,59 +534,8 @@ func (p *Poller) pollHosterJob(ctx context.Context, job *jobs.Job) {
 }
 
 func (p *Poller) downloadHosterFile(ctx context.Context, downloadURL, localPath string, job *jobs.Job, totalSize int64) error {
-	body, contentLength, err := p.ad.DownloadFile(ctx, downloadURL)
-	if err != nil {
-		return err
+	open := func(offset int64) (io.ReadCloser, int64, bool, error) {
+		return p.ad.DownloadFileRange(ctx, downloadURL, offset)
 	}
-	defer body.Close()
-
-	if contentLength > 0 {
-		totalSize = contentLength
-	}
-
-	f, err := os.Create(localPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	buf := make([]byte, 256*1024)
-	var written int64
-	lastUpdate := time.Now()
-	lastBytes := int64(0)
-
-	for {
-		n, readErr := body.Read(buf)
-		if n > 0 {
-			if _, wErr := f.Write(buf[:n]); wErr != nil {
-				os.Remove(localPath)
-				return wErr
-			}
-			written += int64(n)
-
-			if time.Since(lastUpdate) >= 2*time.Second {
-				elapsed := time.Since(lastUpdate).Seconds()
-				speed := float64(written-lastBytes) / elapsed
-				pct := 0
-				if totalSize > 0 {
-					pct = int(float64(written) / float64(totalSize) * 100)
-				}
-				msg := fmt.Sprintf("downloading — %d%% (%d B/s)", pct, int64(speed))
-				if job.Error != msg {
-					job.Error = msg
-					p.store.Update(job)
-				}
-				lastUpdate = time.Now()
-				lastBytes = written
-			}
-		}
-		if readErr != nil {
-			if readErr == io.EOF {
-				break
-			}
-			os.Remove(localPath)
-			return readErr
-		}
-	}
-	return nil
+	return p.downloadToFile(ctx, open, localPath, job, totalSize, 0, 1)
 }

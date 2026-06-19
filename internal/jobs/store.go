@@ -309,6 +309,11 @@ func (s *Store) Delete(id string) error {
 	return err
 }
 
+func (s *Store) ReassignToSystem(id string) error {
+	_, err := s.db.Exec(`UPDATE jobs SET user_id='system', updated_at=? WHERE id=?`, time.Now(), id)
+	return err
+}
+
 type UserStats struct {
 	TotalDownloads int   `json:"total_downloads"`
 	ActiveJobs     int   `json:"active_jobs"`
