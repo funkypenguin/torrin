@@ -36,10 +36,21 @@ type Poller struct {
 	rdClients     sync.Map
 	uploadSem     chan struct{}
 	UploadWg      sync.WaitGroup
+	byosTarget    func(userID string) bool
 }
 
 func (p *Poller) SetUsenetManager(m *usenet.Manager) {
 	p.usenet = m
+}
+
+func (p *Poller) SetBYOSTarget(fn func(userID string) bool) {
+	p.byosTarget = fn
+}
+
+func (p *Poller) enqueueBYOSIfTarget(job *jobs.Job) {
+	if p.byosTarget != nil && job.UserID != "" && p.byosTarget(job.UserID) {
+		p.store.EnqueueBYOS(job.ID, job.UserID)
+	}
 }
 
 func (p *Poller) SetRealDebrid(client *realdebrid.Client, downloadDir string) {

@@ -241,6 +241,7 @@ func (p *Poller) tryAllDebrid(ctx context.Context, job *jobs.Job) bool {
 			sib.Error = ""
 			p.store.Update(sib)
 			p.store.SetFileSize(sib.ID, uploadedSize)
+			p.enqueueBYOSIfTarget(sib)
 		}
 
 		log.Info("job complete via alldebrid", "name", job.Name, "streams", len(streamURLs))

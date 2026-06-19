@@ -304,6 +304,7 @@ func (p *Poller) uploadAndFinalizeFiles(ctx context.Context, job *jobs.Job, file
 		sib.Error = ""
 		p.store.Update(sib)
 		p.store.SetFileSize(sib.ID, uploadedSize)
+		p.enqueueBYOSIfTarget(sib)
 	}
 
 	log.Info("job complete", "name", job.Name, "streams", len(streamURLs))

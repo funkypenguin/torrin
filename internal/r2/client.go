@@ -41,6 +41,47 @@ func NewClient(accountID, accessKey, secretKey, bucket, publicURL, signingKey st
 	}
 }
 
+func NewS3Client(endpoint, region, accessKey, secretKey, bucket string) *Client {
+	if region == "" {
+		region = "auto"
+	}
+	ep := endpoint
+	s3Client := s3.New(s3.Options{
+		Region:       region,
+		BaseEndpoint: &ep,
+		Credentials:  credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+		UsePathStyle: true,
+	})
+	return &Client{s3: s3Client, bucket: bucket}
+}
+
+func (c *Client) TestWrite(ctx context.Context) error {
+	key := ".torrin-byos-test"
+	if _, err := c.s3.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: &c.bucket,
+		Key:    &key,
+		Body:   strings.NewReader("ok"),
+	}); err != nil {
+		return err
+	}
+	_, err := c.s3.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &c.bucket, Key: &key})
+	return err
+}
+
+func (c *Client) PresignGet(ctx context.Context, key string, expiry time.Duration) (string, error) {
+	ps := s3.NewPresignClient(c.s3)
+	req, err := ps.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: &c.bucket,
+		Key:    &key,
+	}, func(o *s3.PresignOptions) {
+		o.Expires = expiry
+	})
+	if err != nil {
+		return "", err
+	}
+	return req.URL, nil
+}
+
 func (c *Client) HasManifest(ctx context.Context, infoHash string) (bool, error) {
 	key := fmt.Sprintf("%s/manifest.json", infoHash)
 	_, err := c.s3.HeadObject(ctx, &s3.HeadObjectInput{
@@ -54,6 +95,21 @@ func (c *Client) HasManifest(ctx context.Context, infoHash string) (bool, error)
 		return false, err
 	}
 	return true, nil
+}
+
+func (c *Client) GetObject(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: &c.bucket,
+		Key:    &key,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	var size int64
+	if out.ContentLength != nil {
+		size = *out.ContentLength
+	}
+	return out.Body, size, nil
 }
 
 func (c *Client) GetManifest(ctx context.Context, infoHash string) ([]byte, error) {

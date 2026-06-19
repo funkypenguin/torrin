@@ -118,6 +118,7 @@ func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.T
 		sib.Error = ""
 		p.store.Update(sib)
 		p.store.SetFileSize(sib.ID, uploadedSize)
+		p.enqueueBYOSIfTarget(sib)
 	}
 
 	p.deleteAndVerify(t.Hash, t)
@@ -215,6 +216,7 @@ func (p *Poller) uploadLocalFiles(ctx context.Context, job *jobs.Job, files []us
 		sib.Error = ""
 		p.store.Update(sib)
 		p.store.SetFileSize(sib.ID, uploadedSize)
+		p.enqueueBYOSIfTarget(sib)
 	}
 
 	slog.Info("job complete", "job", job.ID, "name", job.Name, "streams", len(streamURLs), "users", len(siblings))

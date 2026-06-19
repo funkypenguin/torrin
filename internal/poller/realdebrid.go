@@ -358,6 +358,7 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 		sib.Error = ""
 		p.store.Update(sib)
 		p.store.SetFileSize(sib.ID, uploadedSize)
+		p.enqueueBYOSIfTarget(sib)
 	}
 
 	log.Info("job complete via real-debrid", "name", job.Name, "streams", len(streamURLs), "users", len(siblings))
@@ -583,6 +584,7 @@ func (p *Poller) pollHosterJob(ctx context.Context, job *jobs.Job) {
 			sib.Error = ""
 			p.store.Update(sib)
 			p.store.SetFileSize(sib.ID, fileSize)
+			p.enqueueBYOSIfTarget(sib)
 		}
 
 		log.Info("hoster job complete", "name", job.Name, "size_mb", fileSize/1_000_000)

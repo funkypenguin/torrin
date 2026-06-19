@@ -79,6 +79,22 @@ func migrate(db *sql.DB) error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 
+	db.Exec(`CREATE TABLE IF NOT EXISTS byos_queue (
+		job_id     TEXT PRIMARY KEY,
+		user_id    TEXT NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS byos_objects (
+		job_id     TEXT PRIMARY KEY,
+		user_id    TEXT NOT NULL,
+		bucket     TEXT NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	db.Exec(`ALTER TABLE byos_objects ADD COLUMN info_hash TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE byos_objects ADD COLUMN name TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE byos_objects ADD COLUMN streams_json TEXT NOT NULL DEFAULT '[]'`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_byos_objects_userhash ON byos_objects(user_id, info_hash)`)
+
 	return nil
 }
 
