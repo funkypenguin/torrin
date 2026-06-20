@@ -45,6 +45,13 @@ func (s *Store) DeleteBYOSQueue(jobID string) error {
 	return err
 }
 
+func (s *Store) IncrementBYOSAttempt(jobID string) int {
+	s.db.Exec(`UPDATE byos_queue SET attempts = attempts + 1 WHERE job_id=?`, jobID)
+	var n int
+	s.db.QueryRow(`SELECT attempts FROM byos_queue WHERE job_id=?`, jobID).Scan(&n)
+	return n
+}
+
 // BYOSObject records that a finished job lives in a user's own bucket. The
 // info_hash + streams let a later re-request for the same content (after the
 // shared-R2 copy has evicted) serve straight from the user's bucket instead of

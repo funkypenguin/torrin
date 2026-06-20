@@ -90,6 +90,7 @@ func migrate(db *sql.DB) error {
 		bucket     TEXT NOT NULL,
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
+	db.Exec(`ALTER TABLE byos_queue ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`)
 	db.Exec(`ALTER TABLE byos_objects ADD COLUMN info_hash TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE byos_objects ADD COLUMN name TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE byos_objects ADD COLUMN streams_json TEXT NOT NULL DEFAULT '[]'`)

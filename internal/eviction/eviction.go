@@ -76,12 +76,7 @@ func (e *Engine) RunDaily(ctx context.Context) {
 				slog.Warn("eviction: delete failed", "hash", c.InfoHash, "err", err)
 				continue
 			}
-			siblings, _ := e.store.ListByInfoHash(c.InfoHash)
-			for _, sib := range siblings {
-				sib.Status = jobs.StatusEvicted
-				sib.Error = "content evicted from cache"
-				e.store.Update(sib)
-			}
+			e.markSiblingsEvicted(c.InfoHash)
 			evicted++
 			freedBytes += c.FileSize
 			slog.Info("evicted", "name", c.Name, "reason", reason, "size_mb", c.FileSize/1e6)
@@ -103,12 +98,7 @@ func (e *Engine) RunDaily(ctx context.Context) {
 			if err := e.deleteFromR2(ctx, c.InfoHash); err != nil {
 				continue
 			}
-			siblings, _ := e.store.ListByInfoHash(c.InfoHash)
-			for _, sib := range siblings {
-				sib.Status = jobs.StatusEvicted
-				sib.Error = "content evicted from cache"
-				e.store.Update(sib)
-			}
+			e.markSiblingsEvicted(c.InfoHash)
 			totalSize -= c.FileSize
 			evicted++
 			freedBytes += c.FileSize
@@ -126,6 +116,18 @@ func (e *Engine) RunDaily(ctx context.Context) {
 
 func (e *Engine) deleteFromR2(ctx context.Context, infoHash string) error {
 	return e.r2.DeletePrefix(ctx, infoHash+"/")
+}
+
+func (e *Engine) markSiblingsEvicted(infoHash string) {
+	siblings, _ := e.store.ListByInfoHash(infoHash)
+	for _, sib := range siblings {
+		if _, ok := e.store.GetBYOSObject(sib.ID); ok {
+			continue
+		}
+		sib.Status = jobs.StatusEvicted
+		sib.Error = "content evicted from cache"
+		e.store.Update(sib)
+	}
 }
 
 func (e *Engine) StartSchedule(ctx context.Context, hour int) {
