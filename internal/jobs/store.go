@@ -171,6 +171,14 @@ func (s *Store) ListByIMDB(imdbID string) ([]*Job, error) {
 		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE imdb_id=? AND status IN ('complete','cached') ORDER BY created_at DESC`, imdbID)
 }
 
+func (s *Store) ListCached(limit int) ([]*Job, error) {
+	if limit <= 0 {
+		limit = 2000
+	}
+	return s.queryMany(
+		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE status IN ('complete','cached') AND name != '' ORDER BY created_at DESC LIMIT ?`, limit)
+}
+
 func (s *Store) ListByStatus(status Status) ([]*Job, error) {
 	return s.queryMany(
 		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE status=? ORDER BY priority DESC, created_at ASC`, string(status))
