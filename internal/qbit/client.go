@@ -68,6 +68,25 @@ func (c *Client) Login() error {
 	return fmt.Errorf("login failed: %s (status %d)", body, resp.StatusCode)
 }
 
+func (c *Client) SetAutoTrackers(trackers string) error {
+	prefs, _ := json.Marshal(map[string]any{
+		"add_trackers_enabled": true,
+		"add_trackers":         trackers,
+	})
+	resp, err := c.http.PostForm(c.baseURL+"/api/v2/app/setPreferences", url.Values{
+		"json": {string(prefs)},
+	})
+	if err != nil {
+		return fmt.Errorf("set trackers: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 204 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("set trackers failed: %s (status %d)", body, resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *Client) AddMagnet(magnet string) error {
 	data := url.Values{
 		"urls":               {magnet},
