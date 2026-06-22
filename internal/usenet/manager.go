@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/torrin-app/torrin/internal/safety"
 	"github.com/torrin-app/torrin/internal/usenet/assembler"
 	"github.com/torrin-app/torrin/internal/usenet/nntp"
 	"github.com/torrin-app/torrin/internal/usenet/nzb"
@@ -93,6 +94,14 @@ func (m *Manager) Submit(ctx context.Context, userID string, nzbData []byte, job
 	parsed, err := nzb.ParseBytes(nzbData)
 	if err != nil {
 		return "", fmt.Errorf("parse nzb: %w", err)
+	}
+
+	screen := []string{parsed.Name()}
+	for _, f := range parsed.Files {
+		screen = append(screen, f.Subject)
+	}
+	if v := safety.Screen(screen...); v.Blocked {
+		return "", fmt.Errorf("content blocked by safety policy")
 	}
 
 	hash := nzb.Hash(parsed)

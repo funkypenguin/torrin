@@ -11,6 +11,7 @@ import (
 	"github.com/torrin-app/torrin/internal/qbit"
 	"github.com/torrin-app/torrin/internal/r2"
 	"github.com/torrin-app/torrin/internal/realdebrid"
+	"github.com/torrin-app/torrin/internal/safety"
 	"github.com/torrin-app/torrin/internal/usenet"
 )
 
@@ -37,6 +38,31 @@ type Poller struct {
 	uploadSem     chan struct{}
 	UploadWg      sync.WaitGroup
 	byosTarget    func(userID string) bool
+	banFn         func(userID, reason string)
+}
+
+// SetBanFn wires the account-ban callback used when blocked content is detected.
+func (p *Poller) SetBanFn(fn func(userID, reason string)) {
+	p.banFn = fn
+}
+
+// screenBlocked checks a job's name + the given filenames against the safety
+// blocklist. On a hit it fails the job and (for hard hits) bans the owner, then
+// returns true so the caller aborts before anything reaches R2.
+func (p *Poller) screenBlocked(job *jobs.Job, names ...string) bool {
+	v := safety.Screen(append([]string{job.Name}, names...)...)
+	if !v.Blocked {
+		return false
+	}
+	slog.Warn("blocked content rejected", "job", job.ID, "user", job.UserID, "reason", v.Reason)
+	job.Status = jobs.StatusFailed
+	job.Error = "content blocked by safety policy"
+	p.store.Update(job)
+	if v.Ban && p.banFn != nil && job.UserID != "" && job.UserID != "system" {
+		p.banFn(job.UserID, v.Reason)
+		slog.Warn("account banned for blocked content", "user", job.UserID, "reason", v.Reason)
+	}
+	return true
 }
 
 func (p *Poller) SetUsenetManager(m *usenet.Manager) {
@@ -223,6 +249,12 @@ func (p *Poller) poll(ctx context.Context) {
 
 	for _, job := range allActive {
 		if job.InfoHash == "" {
+			continue
+		}
+
+		// Safety screen every active job (all sources). Blocks/ban on a hit before
+		// any provider caches it; the pre-upload guards are the final backstop.
+		if p.screenBlocked(job, job.Magnet) {
 			continue
 		}
 

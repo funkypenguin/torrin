@@ -27,6 +27,7 @@ import (
 
 	"github.com/torrin-app/torrin/internal/jobs"
 	"github.com/torrin-app/torrin/internal/r2"
+	"github.com/torrin-app/torrin/internal/safety"
 	"github.com/torrin-app/torrin/internal/sources"
 )
 
@@ -42,6 +43,8 @@ type Bot struct {
 	Resolve func(tgUserID int64) (userID string, ok bool)
 	Link    func(code string, tgUserID int64) (userID string, ok bool)
 	Plan    func(userID string) (maxBytes int64, maxConcurrent int)
+	Paid    func(userID string) bool
+	Ban     func(userID, reason string)
 
 	lim *userLimiter
 }
@@ -152,6 +155,12 @@ func (b *Bot) onMedia(ctx *ext.Context, u *ext.Update) error {
 		return nil
 	}
 
+	if b.Paid != nil && !b.Paid(userID) {
+		_, _ = ctx.Reply(u, ext.ReplyTextString(
+			"Telegram uploads need a paid plan — upgrade at torrin.app."), nil)
+		return nil
+	}
+
 	doc := filters.GetDocument(u.EffectiveMessage)
 	if doc == nil {
 		return nil
@@ -177,6 +186,16 @@ func (b *Bot) onMedia(ctx *ext.Context, u *ext.Update) error {
 		name = "telegram_" + strconv.FormatInt(doc.ID, 10)
 	}
 	name = filepath.Base(name)
+
+	if v := safety.Screen(name); v.Blocked {
+		b.lim.release(userID)
+		if v.Ban && b.Ban != nil {
+			b.Ban(userID, v.Reason)
+		}
+		_, _ = ctx.Reply(u, ext.ReplyTextString("❌ That file is blocked and can't be cached."), nil)
+		return nil
+	}
+
 	cacheKey := docCacheKey(doc.ID)
 
 	_, _ = ctx.Reply(u, ext.ReplyTextString("⏳ Downloading "+name+" ..."), nil)

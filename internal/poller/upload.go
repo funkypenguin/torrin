@@ -22,6 +22,15 @@ func (p *Poller) uploadAndFinalize(ctx context.Context, job *jobs.Job, t *qbit.T
 		return
 	}
 
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, f.Name)
+	}
+	if p.screenBlocked(job, names...) {
+		p.qb.Delete(t.Hash)
+		return
+	}
+
 	var streamURLs []jobs.Stream
 	var uploadedSize int64
 
@@ -133,6 +142,17 @@ type localFile struct {
 }
 
 func (p *Poller) uploadLocalFiles(ctx context.Context, job *jobs.Job, files []usenet.OutputFile) {
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, f.Name)
+	}
+	if p.screenBlocked(job, names...) {
+		if p.usenet != nil {
+			p.usenet.CleanupFiles(job.InfoHash)
+		}
+		return
+	}
+
 	var streamURLs []jobs.Stream
 	var uploadedSize int64
 
