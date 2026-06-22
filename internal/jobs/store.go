@@ -4,10 +4,69 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	tnp "github.com/torrin-app/torrent-name-parser"
 )
+
+var titleStopwords = map[string]bool{"the": true, "a": true, "an": true, "of": true, "and": true}
+
+func NormTitle(s string) string {
+	var tokens []string
+	var tok strings.Builder
+	flush := func() {
+		if t := tok.String(); t != "" {
+			tokens = append(tokens, t)
+		}
+		tok.Reset()
+	}
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			tok.WriteRune(r)
+		} else {
+			flush()
+		}
+	}
+	flush()
+
+	var sig strings.Builder
+	for _, t := range tokens {
+		if titleStopwords[t] || isYearToken(t) {
+			continue
+		}
+		sig.WriteString(t)
+	}
+	if sig.Len() > 0 {
+		return sig.String()
+	}
+	var raw strings.Builder
+	for _, t := range tokens {
+		raw.WriteString(t)
+	}
+	return raw.String()
+}
+
+func isYearToken(t string) bool {
+	if len(t) != 4 {
+		return false
+	}
+	for _, c := range t {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return t >= "1900" && t <= "2099"
+}
+
+func titleNormFromName(name string) string {
+	info, err := tnp.ParseName(strings.ReplaceAll(name, ".", " "))
+	if err != nil {
+		return ""
+	}
+	return NormTitle(info.Title)
+}
 
 type Store struct {
 	db *sql.DB
@@ -23,7 +82,9 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	s := &Store{db: db}
+	go s.backfillTitleNorm()
+	return s, nil
 }
 
 func migrate(db *sql.DB) error {
@@ -62,6 +123,9 @@ func migrate(db *sql.DB) error {
 	db.Exec(`ALTER TABLE jobs ADD COLUMN nzb_data BLOB`)
 	db.Exec(`ALTER TABLE jobs ADD COLUMN imdb_id TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_imdbid ON jobs(imdb_id)`)
+
+	db.Exec(`ALTER TABLE jobs ADD COLUMN title_norm TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_titlenorm ON jobs(title_norm)`)
 
 	db.Exec(`CREATE TABLE IF NOT EXISTS views (
 		info_hash TEXT NOT NULL,
@@ -110,10 +174,10 @@ func (s *Store) Create(job *Job) error {
 	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO jobs (id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO jobs (id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, title_norm, file_size, max_bytes, priority, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.ID, job.UserID, job.InfoHash, job.Name, job.Magnet, source, job.Status, job.Error,
-		string(files), string(selected), string(streams), job.NZBData, job.IMDBID,
+		string(files), string(selected), string(streams), job.NZBData, job.IMDBID, titleNormFromName(job.Name),
 		job.FileSize, job.MaxBytes, job.Priority, job.CreatedAt, job.UpdatedAt,
 	)
 	return err
@@ -126,10 +190,10 @@ func (s *Store) Update(job *Job) error {
 	job.UpdatedAt = time.Now()
 
 	_, err := s.db.Exec(`
-		UPDATE jobs SET name=?, status=?, error=?, files=?, selected=?, streams=?, updated_at=?
+		UPDATE jobs SET name=?, status=?, error=?, files=?, selected=?, streams=?, title_norm=?, updated_at=?
 		WHERE id=?`,
 		job.Name, job.Status, job.Error,
-		string(files), string(selected), string(streams),
+		string(files), string(selected), string(streams), titleNormFromName(job.Name),
 		job.UpdatedAt, job.ID,
 	)
 	return err
@@ -171,12 +235,42 @@ func (s *Store) ListByIMDB(imdbID string) ([]*Job, error) {
 		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE imdb_id=? AND status IN ('complete','cached') ORDER BY created_at DESC`, imdbID)
 }
 
-func (s *Store) ListCached(limit int) ([]*Job, error) {
-	if limit <= 0 {
-		limit = 2000
+func (s *Store) ListByTitleNorm(norm string) ([]*Job, error) {
+	if norm == "" {
+		return nil, nil
 	}
 	return s.queryMany(
-		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE status IN ('complete','cached') AND name != '' ORDER BY created_at DESC LIMIT ?`, limit)
+		`SELECT id, user_id, info_hash, name, magnet, source, status, error, files, selected, streams, nzb_data, imdb_id, file_size, max_bytes, priority, created_at, updated_at FROM jobs WHERE title_norm=? AND status IN ('complete','cached') ORDER BY created_at DESC`, norm)
+}
+
+func (s *Store) backfillTitleNorm() {
+	rows, err := s.db.Query(`SELECT id, name, title_norm FROM jobs WHERE name != ''`)
+	if err != nil {
+		return
+	}
+	type upd struct{ id, norm string }
+	var changed []upd
+	for rows.Next() {
+		var id, name, cur string
+		if rows.Scan(&id, &name, &cur) != nil {
+			continue
+		}
+		if tn := titleNormFromName(name); tn != "" && tn != cur {
+			changed = append(changed, upd{id, tn})
+		}
+	}
+	rows.Close()
+	if len(changed) == 0 {
+		return
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return
+	}
+	for _, u := range changed {
+		tx.Exec(`UPDATE jobs SET title_norm=? WHERE id=?`, u.norm, u.id)
+	}
+	tx.Commit()
 }
 
 func (s *Store) ListByStatus(status Status) ([]*Job, error) {
