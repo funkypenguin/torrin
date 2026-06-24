@@ -14,6 +14,7 @@ type Policy struct {
 	NeverAccessedTTL int   // Days before deleting never-watched content (default: 7)
 	StandardTTL      int   // Days of inactivity for 1-9 access count (default: 30)
 	PopularTTL       int   // Days of inactivity for 10+ access count (default: 60)
+	PrewarmColdTTL   int   // Days a never-watched prewarmed title is kept (its discovery window)
 	StorageCapBytes  int64 // Soft cap; over this the budget pass reclaims cold content
 	BudgetGraceDays  int   // Budget pass never touches content idle fewer than this many days
 }
@@ -22,6 +23,7 @@ var DefaultPolicy = Policy{
 	NeverAccessedTTL: 3,
 	StandardTTL:      14,
 	PopularTTL:       45,
+	PrewarmColdTTL:   14,
 	StorageCapBytes:  300_000_000_000,
 	BudgetGraceDays:  3,
 }
@@ -60,6 +62,11 @@ func (e *Engine) RunDaily(ctx context.Context) {
 				shouldEvict = true
 				reason = fmt.Sprintf("large file (%dGB), %d days inactive", c.FileSize/1e9, c.DaysSinceAccess)
 			}
+		} else if c.IsPrewarm && c.AccessCount == 0 {
+			if c.DaysSinceAccess >= e.policy.PrewarmColdTTL {
+				shouldEvict = true
+				reason = fmt.Sprintf("cold prewarm, %d days unwatched", c.DaysSinceAccess)
+			}
 		} else if c.AccessCount == 0 && c.DaysSinceAccess >= e.policy.NeverAccessedTTL {
 			shouldEvict = true
 			reason = fmt.Sprintf("never accessed, %d days old", c.DaysSinceAccess)
@@ -88,7 +95,15 @@ func (e *Engine) RunDaily(ctx context.Context) {
 		slog.Warn("eviction: over storage cap", "total_gb", totalSize/1e9, "cap_gb", e.policy.StorageCapBytes/1e9)
 
 		candidates, _ = e.store.GetEvictionCandidates()
+		var coldPrewarm, rest []jobs.EvictionCandidate
 		for _, c := range candidates {
+			if c.IsPrewarm && c.AccessCount == 0 {
+				coldPrewarm = append(coldPrewarm, c)
+			} else {
+				rest = append(rest, c)
+			}
+		}
+		for _, c := range append(coldPrewarm, rest...) {
 			if totalSize <= e.policy.StorageCapBytes {
 				break
 			}

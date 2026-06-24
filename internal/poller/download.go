@@ -33,6 +33,10 @@ func downloadResilient(ctx context.Context, open rangeOpener, f *os.File, onProg
 	var written, total int64
 	var lastErr error
 
+	if fi, err := f.Stat(); err == nil && fi.Size() > 0 {
+		written = fi.Size()
+	}
+
 	for attempt := 0; attempt < maxDownloadAttempts; attempt++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -92,7 +96,12 @@ func downloadResilient(ctx context.Context, open rangeOpener, f *os.File, onProg
 }
 
 func (p *Poller) downloadToFile(ctx context.Context, open rangeOpener, localPath string, job *jobs.Job, totalSize int64, fileIdx, fileCount int) error {
-	f, err := os.Create(localPath)
+	if totalSize > 0 {
+		if fi, err := os.Stat(localPath); err == nil && fi.Size() >= totalSize {
+			return nil
+		}
+	}
+	f, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
@@ -130,7 +139,9 @@ func (p *Poller) downloadToFile(ctx context.Context, open rangeOpener, localPath
 	}
 
 	if err := downloadResilient(ctx, open, f, onProgress); err != nil {
-		os.Remove(localPath)
+		if ctx.Err() == nil {
+			os.Remove(localPath)
+		}
 		return err
 	}
 	return nil

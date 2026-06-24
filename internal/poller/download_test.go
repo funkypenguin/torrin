@@ -1,11 +1,45 @@
 package poller
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
 	"testing"
 )
+
+// Pre-seed a file with 400 of 1000 bytes (an interrupted run); resume must
+// request Range from 400 and finish, not re-download from 0.
+func TestResilient_ResumeFromDisk(t *testing.T) {
+	orig := downloadBackoff
+	downloadBackoff = func(context.Context, int) {}
+	defer func() { downloadBackoff = orig }()
+
+	full := makeData(1000)
+	f, err := os.CreateTemp(t.TempDir(), "dl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.Write(full[:400]); err != nil {
+		t.Fatal(err)
+	}
+
+	open := func(offset int64) (io.ReadCloser, int64, bool, error) {
+		if offset != 400 {
+			t.Fatalf("resume offset = %d, want 400", offset)
+		}
+		return &chunkReader{data: full[400:], failAfter: -1}, 1000, false, nil
+	}
+	if err := downloadResilient(context.Background(), open, f, nil); err != nil {
+		t.Fatal(err)
+	}
+	f.Seek(0, io.SeekStart)
+	out, _ := io.ReadAll(f)
+	if !bytes.Equal(out, full) {
+		t.Fatalf("resumed file mismatch: got %d bytes, want 1000", len(out))
+	}
+}
 
 // chunkReader yields data, optionally erroring after failAfter bytes to simulate a
 // dropped connection mid-stream.

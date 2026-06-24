@@ -172,6 +172,57 @@ func TestDownloadAll_SingleFile(t *testing.T) {
 	}
 }
 
+func TestDownloadAll_ResumeSkipsCompleted(t *testing.T) {
+	backend := newAsmBackend()
+	backend.addArticle("r1@test", makeYencArticle([]byte("AAAA"), 1, 2, "movie.mkv"))
+	backend.addArticle("r2@test", makeYencArticle([]byte("BBBB"), 2, 2, "movie.mkv"))
+
+	addr, stop := startAsmServer(backend)
+	defer stop()
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	pool := nntp.NewPool(&nntp.Credentials{Host: host, Port: port, SSL: false, MaxConnections: 1})
+	defer pool.Close()
+	c, _ := pool.Get()
+	c.Group("alt.binaries.test")
+	pool.Put(c)
+
+	n := &nzb.NZB{Files: []nzb.File{{
+		Subject: `"movie.mkv" (1/1)`,
+		Groups:  []string{"alt.binaries.test"},
+		Segments: []nzb.Segment{
+			{MessageID: "r1@test", Number: 1, Bytes: 100},
+			{MessageID: "r2@test", Number: 2, Bytes: 100},
+		},
+	}}}
+
+	tmpDir := t.TempDir()
+	asm := assembler.New(pool)
+
+	// First run: downloads + finalizes the file.
+	if _, err := asm.DownloadAll(context.Background(), n, tmpDir, nil); err != nil {
+		t.Fatalf("first run failed: %v", err)
+	}
+
+	// Wipe the articles: any re-fetch now fails. A correct resume must skip the
+	// already-finished file and succeed without touching the network.
+	backend.articles = map[string][]byte{}
+
+	results, err := asm.DownloadAll(context.Background(), n, tmpDir, nil)
+	if err != nil {
+		t.Fatalf("resume run should skip completed file, but failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result on resume, got %d", len(results))
+	}
+	content, _ := os.ReadFile(results[0].Path)
+	if !bytes.Equal(content, []byte("AAAABBBB")) {
+		t.Fatalf("resumed content mismatch: got %q", content)
+	}
+}
+
 func TestDownloadAll_MultipleFiles(t *testing.T) {
 	backend := newAsmBackend()
 

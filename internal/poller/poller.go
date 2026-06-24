@@ -308,6 +308,11 @@ func (p *Poller) poll(ctx context.Context) {
 			}
 		}
 
+		if job.UserID == "prewarm" && job.Status == jobs.StatusPending {
+			p.failDownload(ctx, job, "not cached on any debrid")
+			continue
+		}
+
 		if !qbOk {
 			continue
 		}

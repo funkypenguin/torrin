@@ -353,6 +353,7 @@ func (s *Store) RecordView(infoHash, userID string) (bool, error) {
 	}
 	s.db.Exec(`UPDATE jobs SET last_accessed_at=CURRENT_TIMESTAMP, access_count=access_count+1, updated_at=CURRENT_TIMESTAMP
 		WHERE info_hash=? AND (status='complete' OR status='cached')`, infoHash)
+	s.db.Exec(`UPDATE jobs SET user_id='system' WHERE info_hash=? AND user_id='prewarm'`, infoHash)
 	return true, nil
 }
 
@@ -363,12 +364,14 @@ type EvictionCandidate struct {
 	FileSize        int64
 	AccessCount     int
 	DaysSinceAccess int
+	IsPrewarm       bool
 }
 
 func (s *Store) GetEvictionCandidates() ([]EvictionCandidate, error) {
 	rows, err := s.db.Query(`
 		SELECT MIN(id), info_hash, MAX(name), MAX(file_size), SUM(access_count),
-			CAST(julianday('now') - julianday(MAX(COALESCE(last_accessed_at, created_at))) AS INTEGER) as days_inactive
+			CAST(julianday('now') - julianday(MAX(COALESCE(last_accessed_at, created_at))) AS INTEGER) as days_inactive,
+			MAX(CASE WHEN user_id='prewarm' THEN 1 ELSE 0 END) as is_prewarm
 		FROM jobs
 		WHERE status IN ('complete', 'cached')
 		GROUP BY info_hash
@@ -388,9 +391,11 @@ func (s *Store) GetEvictionCandidates() ([]EvictionCandidate, error) {
 	var out []EvictionCandidate
 	for rows.Next() {
 		var c EvictionCandidate
-		if err := rows.Scan(&c.ID, &c.InfoHash, &c.Name, &c.FileSize, &c.AccessCount, &c.DaysSinceAccess); err != nil {
+		var isPrewarm int
+		if err := rows.Scan(&c.ID, &c.InfoHash, &c.Name, &c.FileSize, &c.AccessCount, &c.DaysSinceAccess, &isPrewarm); err != nil {
 			continue
 		}
+		c.IsPrewarm = isPrewarm == 1
 		out = append(out, c)
 	}
 	return out, nil
@@ -516,6 +521,11 @@ func (s *Store) GetPlatformWrapped() (*PlatformWrapped, error) {
 	s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE status IN ('complete','cached')`).Scan(&p.TotalCached)
 	s.db.QueryRow(`SELECT COALESCE(SUM(access_count), 0) FROM jobs`).Scan(&p.TotalStreams)
 	s.db.QueryRow(`SELECT COALESCE(SUM(file_size), 0) FROM jobs WHERE status IN ('complete','cached')`).Scan(&p.TotalBytes)
+	var localCount int
+	var localBytes int64
+	s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(file_size),0) FROM local_media`).Scan(&localCount, &localBytes)
+	p.TotalCached += localCount
+	p.TotalBytes += localBytes
 	s.db.QueryRow(`SELECT COUNT(DISTINCT info_hash) FROM jobs WHERE status IN ('complete','cached')`).Scan(&p.UniqueHashes)
 	s.db.QueryRow(`SELECT COUNT(DISTINCT user_id) FROM jobs WHERE date(created_at) = date('now')`).Scan(&p.ActiveToday)
 
@@ -630,14 +640,17 @@ type MetricsSnapshot struct {
 
 func (s *Store) RecordDailySnapshot(totalUsers int) error {
 	today := time.Now().Format("2006-01-02")
+	var localCount int
+	var localSize int64
+	s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(file_size),0) FROM local_media`).Scan(&localCount, &localSize)
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO metrics_snapshots (date, cached_count, cached_size, total_views, total_users)
 		VALUES (?,
-			(SELECT COUNT(*) FROM jobs WHERE status IN ('complete','cached')),
-			(SELECT COALESCE(SUM(max_size), 0) FROM (SELECT MAX(file_size) as max_size FROM jobs WHERE status IN ('complete','cached') GROUP BY info_hash)),
+			(SELECT COUNT(*) FROM jobs WHERE status IN ('complete','cached')) + ?,
+			(SELECT COALESCE(SUM(max_size), 0) FROM (SELECT MAX(file_size) as max_size FROM jobs WHERE status IN ('complete','cached') GROUP BY info_hash)) + ?,
 			(SELECT COALESCE(SUM(access_count), 0) FROM jobs),
 			?
-		)`, today, totalUsers)
+		)`, today, localCount, localSize, totalUsers)
 	return err
 }
 

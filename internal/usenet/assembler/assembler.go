@@ -56,6 +56,19 @@ func (a *Assembler) DownloadAll(ctx context.Context, n *nzb.NZB, outputDir strin
 			continue
 		}
 
+		if name := candidateName(file); name != "" {
+			outPath := filepath.Join(outputDir, name)
+			if fi, err := os.Stat(outPath); err == nil && fi.Size() > 0 {
+				slog.Info("resume: reusing completed file", "name", name, "size_mb", fi.Size()/1e6)
+				done := completedSegments.Add(int64(len(file.Segments)))
+				if onProgress != nil {
+					onProgress(float64(done)/float64(totalSegments), downloadedBytes.Load())
+				}
+				results = append(results, FileResult{Name: name, Path: outPath, Size: fi.Size()})
+				continue
+			}
+		}
+
 		result, err := a.downloadFile(ctx, file, outputDir, func() {
 			done := completedSegments.Add(1)
 			progress := float64(done) / float64(totalSegments)
@@ -131,10 +144,10 @@ func (a *Assembler) downloadFile(ctx context.Context, file nzb.File, outputDir s
 		return nil, fmt.Errorf("unsafe filename rejected: %s", filename)
 	}
 
-	// Open file upfront for streaming writes.
-	f, err := os.Create(outPath)
+	partPath := outPath + ".part"
+	f, err := os.Create(partPath)
 	if err != nil {
-		return nil, fmt.Errorf("create %s: %w", outPath, err)
+		return nil, fmt.Errorf("create %s: %w", partPath, err)
 	}
 	defer f.Close()
 
@@ -233,6 +246,12 @@ func (a *Assembler) downloadFile(ctx context.Context, file nzb.File, outputDir s
 		}
 	}
 
+	f.Sync()
+	f.Close()
+	if err := os.Rename(partPath, outPath); err != nil {
+		return nil, fmt.Errorf("finalize %s: %w", filename, err)
+	}
+
 	slog.Info("assembled file", "name", filename, "size_mb", totalSize/1e6, "segments", len(segments))
 
 	return &FileResult{
@@ -281,14 +300,23 @@ func (a *Assembler) fetchSegment(messageID, group string) ([]byte, error) {
 	return nil, fmt.Errorf("after 3 attempts: %w", lastErr)
 }
 
-// isSkippable returns true for files we should skip entirely (par2, nzb).
+func candidateName(file nzb.File) string {
+	name := file.Filename
+	if name == "" {
+		name = extractFilename(file.Subject)
+	}
+	if name == "" {
+		return ""
+	}
+	return filepath.Base(name)
+}
+
 func isSkippable(name string) bool {
 	lower := strings.ToLower(name)
 	return strings.HasSuffix(lower, ".par2") || strings.Contains(lower, ".par2") ||
 		strings.HasSuffix(lower, ".nzb")
 }
 
-// isOptional returns true for files that aren't essential content (nfo, sfv, etc).
 func isOptional(name string) bool {
 	lower := strings.ToLower(name)
 	return strings.HasSuffix(lower, ".nfo") || strings.HasSuffix(lower, ".sfv") ||

@@ -223,7 +223,11 @@ func (p *Poller) downloadFromRD(ctx context.Context, job *jobs.Job, torrent *rea
 		p.store.Update(job)
 		return
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if ctx.Err() == nil {
+			os.RemoveAll(tmpDir)
+		}
+	}()
 
 	type dlFile struct {
 		Name string
@@ -447,7 +451,11 @@ func (p *Poller) pollHosterJob(ctx context.Context, job *jobs.Job) {
 		// Step 3: Download.
 		tmpDir := filepath.Join(p.rdDownloadDir, job.InfoHash)
 		os.MkdirAll(tmpDir, 0755)
-		defer os.RemoveAll(tmpDir)
+		defer func() {
+			if ctx.Err() == nil {
+				os.RemoveAll(tmpDir)
+			}
+		}()
 
 		localPath := filepath.Join(tmpDir, filepath.Base(unlocked.Filename))
 

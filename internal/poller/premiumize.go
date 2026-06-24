@@ -114,7 +114,11 @@ func (p *Poller) tryPremiumize(ctx context.Context, job *jobs.Job) bool {
 
 		tmpDir := filepath.Join(p.rdDownloadDir, job.InfoHash)
 		os.MkdirAll(tmpDir, 0755)
-		defer os.RemoveAll(tmpDir)
+		defer func() {
+			if ctx.Err() == nil {
+				os.RemoveAll(tmpDir)
+			}
+		}()
 
 		var downloadedFiles []downloadedFile
 

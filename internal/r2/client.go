@@ -43,6 +43,38 @@ type Client struct {
 	bucket     string
 	publicURL  string
 	signingKey []byte
+	coldS3     *s3.Client
+	coldBucket string
+	writeS3    bool
+}
+
+func (c *Client) SetColdS3(endpoint, region, accessKey, secretKey, bucket string, writeS3 bool) {
+	if region == "" {
+		region = "auto"
+	}
+	ep := endpoint
+	c.coldS3 = s3.New(s3.Options{
+		Region:       region,
+		BaseEndpoint: &ep,
+		Credentials:  credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+		UsePathStyle: true,
+	})
+	c.coldBucket = bucket
+	c.writeS3 = writeS3
+}
+
+func (c *Client) HasColdS3() bool { return c.coldS3 != nil }
+
+func (c *Client) ColdS3Get(ctx context.Context, key, rangeHeader string) (*s3.GetObjectOutput, error) {
+	in := &s3.GetObjectInput{Bucket: &c.coldBucket, Key: &key}
+	if rangeHeader != "" {
+		in.Range = &rangeHeader
+	}
+	return c.coldS3.GetObject(ctx, in)
+}
+
+func (c *Client) ColdS3Head(ctx context.Context, key string) (*s3.HeadObjectOutput, error) {
+	return c.coldS3.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &c.coldBucket, Key: &key})
 }
 
 func NewClient(accountID, accessKey, secretKey, bucket, publicURL, signingKey string) *Client {
@@ -146,7 +178,20 @@ func (c *Client) GetManifest(ctx context.Context, infoHash string) ([]byte, erro
 	return io.ReadAll(out.Body)
 }
 
+func coldEligible(key string) bool {
+	return !strings.HasSuffix(key, "/manifest.json") && !strings.HasSuffix(key, ".m3u8")
+}
+
 func (c *Client) UploadFile(ctx context.Context, key string, reader io.Reader, contentType string) error {
+	if coldEligible(key) && c.coldS3 != nil && c.writeS3 {
+		_, err := c.coldS3.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:      &c.coldBucket,
+			Key:         &key,
+			Body:        reader,
+			ContentType: &contentType,
+		})
+		return err
+	}
 	_, err := c.s3.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      &c.bucket,
 		Key:         &key,
@@ -157,14 +202,18 @@ func (c *Client) UploadFile(ctx context.Context, key string, reader io.Reader, c
 }
 
 func (c *Client) StreamUpload(ctx context.Context, key string, reader io.Reader, contentType string) error {
-	uploader := manager.NewUploader(c.s3, func(u *manager.Uploader) {
+	target, bucket := c.s3, c.bucket
+	if coldEligible(key) && c.coldS3 != nil && c.writeS3 {
+		target, bucket = c.coldS3, c.coldBucket
+	}
+	uploader := manager.NewUploader(target, func(u *manager.Uploader) {
 		u.PartSize = 32 * 1024 * 1024
 		u.Concurrency = 8
 		u.LeavePartsOnError = false
 	})
 
 	_, err := uploader.Upload(ctx, &s3.PutObjectInput{
-		Bucket:      &c.bucket,
+		Bucket:      &bucket,
 		Key:         &key,
 		Body:        reader,
 		ContentType: &contentType,
@@ -173,10 +222,17 @@ func (c *Client) StreamUpload(ctx context.Context, key string, reader io.Reader,
 }
 
 func (c *Client) DeletePrefix(ctx context.Context, prefix string) error {
+	if c.coldS3 != nil {
+		deleteS3Prefix(ctx, c.coldS3, c.coldBucket, prefix)
+	}
+	return deleteS3Prefix(ctx, c.s3, c.bucket, prefix)
+}
+
+func deleteS3Prefix(ctx context.Context, cl *s3.Client, bucket, prefix string) error {
 	var continuationToken *string
 	for {
-		list, err := c.s3.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket:            &c.bucket,
+		list, err := cl.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            &bucket,
 			Prefix:            &prefix,
 			ContinuationToken: continuationToken,
 		})
@@ -185,8 +241,8 @@ func (c *Client) DeletePrefix(ctx context.Context, prefix string) error {
 		}
 		var lastErr error
 		for _, obj := range list.Contents {
-			if _, err := c.s3.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket: &c.bucket,
+			if _, err := cl.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: &bucket,
 				Key:    obj.Key,
 			}); err != nil {
 				lastErr = err
@@ -214,33 +270,23 @@ func (c *Client) SignURL(path string, expiry time.Duration) string {
 	return fmt.Sprintf("%s/%s?expires=%d&sig=%s", c.publicURL, encodedPath, expires, sig)
 }
 
-func contentTypeFor(name string) string {
-	switch {
-	case strings.HasSuffix(name, ".m3u8"):
-		return "application/vnd.apple.mpegurl"
-	case strings.HasSuffix(name, ".ts"):
-		return "video/mp2t"
-	case strings.HasSuffix(name, ".json"):
-		return "application/json"
-	case strings.HasSuffix(name, ".mp4"):
-		return "video/mp4"
-	default:
-		return "application/octet-stream"
+func (c *Client) SignURLWithUser(path, userID string, expiry time.Duration) string {
+	if userID == "" {
+		return c.SignURL(path, expiry)
 	}
-}
-
-func (c *Client) PublicURL() string {
-	return c.publicURL
+	expires := time.Now().Add(expiry).Unix()
+	msg := fmt.Sprintf("%s:%d:%s", path, expires, userID)
+	mac := hmac.New(sha256.New, c.signingKey)
+	mac.Write([]byte(msg))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	parts := strings.Split(path, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	encodedPath := strings.Join(parts, "/")
+	return fmt.Sprintf("%s/%s?expires=%d&u=%s&sig=%s", c.publicURL, encodedPath, expires, url.QueryEscape(userID), sig)
 }
 
 func (c *Client) SigningKey() []byte {
 	return c.signingKey
-}
-
-func (c *Client) BucketName() string {
-	return c.bucket
-}
-
-func (c *Client) S3() *s3.Client {
-	return c.s3
 }
